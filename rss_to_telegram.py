@@ -27,11 +27,42 @@ from deep_translator import GoogleTranslator
 # ---------------------------------------------------------------------------
 
 FEEDS = [
-    {"name": "أخبار Myfxbook", "url": "https://www.myfxbook.com/rss/latest-forex-news"},
     {"name": "العربية", "url": "https://www.alarabiya.net/feed/rss2/ar.xml"},
     {"name": "العربية - العرب والعالم", "url": "https://www.alarabiya.net/feed/rss2/ar/arab-and-world.xml"},
     {"name": "العربية - أسواق", "url": "https://www.alarabiya.net/feed/rss2/ar/aswaq.xml"},
+    {"name": "الشرق الأوسط", "url": "https://aawsat.com/feed"},
+    {"name": "سكاي نيوز عربية", "url": "https://www.skynewsarabia.com/web/rss/home.xml"},
 ]
+
+# Only these two feeds are broad, general-news firehoses (sports, entertainment,
+# local crime, etc all mixed in) so they need topic filtering. The Al Arabiya
+# "arab-and-world" and "aswaq" (markets) feeds are already reasonably on-topic,
+# and the main Al Arabiya feed is kept as-is too, but you can add it here if it
+# ever gets noisy.
+FEEDS_NEEDING_TOPIC_FILTER = {
+    "https://aawsat.com/feed",
+    "https://www.skynewsarabia.com/web/rss/home.xml",
+}
+
+# Keywords used to decide if a story from a general-news feed is relevant to
+# forex/gold trading or major Middle East / US politics. Case-insensitive
+# substring match against the (already-Arabic) title + summary.
+TOPIC_KEYWORDS = [
+    # markets / forex / gold
+    "الذهب", "فوركس", "دولار", "اليورو", "البورصة", "الأسهم", "الأسواق",
+    "النفط", "الفائدة", "التضخم", "الاقتصاد", "الفيدرالي", "البنك المركزي",
+    "أوبك", "الناتج المحلي", "سوق العملات", "أسعار الفائدة",
+    # geopolitics likely to move markets / matter to a forex-news audience
+    "ترامب", "نتنياهو", "إيران", "إسرائيل", "غزة", "لبنان", "سوريا",
+    "العراق", "الأردن", "السعودية", "الإمارات", "قطر", "روسيا", "أوكرانيا",
+    "الحرب", "صواريخ", "عقوبات", "البيت الأبيض", "الكونغرس", "مجلس الأمن",
+    "الأمم المتحدة", "الناتو", "وزارة الخارجية", "احتجاجات",
+]
+
+
+def matches_topic(title: str, summary: str) -> bool:
+    haystack = f"{title} {summary}"
+    return any(keyword in haystack for keyword in TOPIC_KEYWORDS)
 
 STATE_FILE = Path(__file__).parent / "state.json"
 MAX_SEEN_PER_FEED = 300        # how many ids to remember per feed (keeps state.json small)
@@ -114,6 +145,27 @@ def escape_markdown_v2(text: str) -> str:
     return "".join(f"\\{c}" if c in escape_chars else c for c in text)
 
 
+EMOJI_RULES = [
+    # (emoji, keywords) — checked in order, first match wins
+    ("💰", ["الذهب", "أونصة", "أوقية"]),
+    ("🛢️", ["النفط", "أوبك", "برميل"]),
+    ("💵", ["الدولار", "اليورو", "العملات", "فوركس", "سعر الصرف"]),
+    ("🏦", ["الفائدة", "الفيدرالي", "البنك المركزي", "التضخم"]),
+    ("📈", ["البورصة", "الأسهم", "الأسواق", "الاقتصاد"]),
+    ("🚨", ["حرب", "صواريخ", "هجوم", "تصعيد", "عاجل", "اشتباك"]),
+    ("🌍", ["ترامب", "نتنياهو", "إيران", "إسرائيل", "غزة", "البيت الأبيض", "عقوبات"]),
+]
+DEFAULT_EMOJI = "📰"
+
+
+def pick_emoji(title: str, summary: str) -> str:
+    haystack = f"{title} {summary}"
+    for emoji, keywords in EMOJI_RULES:
+        if any(keyword in haystack for keyword in keywords):
+            return emoji
+    return DEFAULT_EMOJI
+
+
 def build_message(feed_name: str, entry) -> str:
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
@@ -123,7 +175,9 @@ def build_message(feed_name: str, entry) -> str:
     title_ar = to_arabic(title)
     summary_ar = to_arabic(summary) if summary else ""
 
-    parts = [escape_markdown_v2(title_ar)]
+    emoji = pick_emoji(title_ar, summary_ar)
+
+    parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
     if summary_ar and summary_ar != title_ar:
         parts.append(escape_markdown_v2(summary_ar))
     return "\n\n".join(parts)
@@ -194,6 +248,13 @@ def main() -> None:
                 # Just record it as seen, don't send anything.
                 new_ids_this_run.append(eid)
                 continue
+
+            if url in FEEDS_NEEDING_TOPIC_FILTER:
+                raw_title = clean_text(entry.get("title", ""))
+                raw_summary = clean_text(entry.get("summary", ""))
+                if not matches_topic(raw_title, raw_summary):
+                    new_ids_this_run.append(eid)  # mark seen, skip silently
+                    continue
 
             if sent_this_feed >= MAX_ITEMS_PER_FEED_PER_RUN:
                 print(f"  ~ Hit per-run cap ({MAX_ITEMS_PER_FEED_PER_RUN}) for this feed, will catch the rest next run.")
