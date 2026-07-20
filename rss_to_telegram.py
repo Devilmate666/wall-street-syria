@@ -69,6 +69,19 @@ MAX_SEEN_PER_FEED = 300        # how many ids to remember per feed (keeps state.
 MAX_ITEMS_PER_FEED_PER_RUN = 50  # safety cap so a feed reset doesn't spam the channel
 SEND_DELAY_SECONDS = 1.2        # be polite to Telegram's rate limits
 
+# Some news sites block requests that don't look like a real browser
+# (feedparser's default request has no User-Agent at all). We fetch the
+# feed ourselves with browser-like headers, then hand the raw bytes to
+# feedparser to parse.
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
+REQUEST_TIMEOUT_SECONDS = 20
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -219,7 +232,9 @@ def main() -> None:
         print(f"Fetching: {name} ({url})")
 
         try:
-            parsed = feedparser.parse(url)
+            resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            parsed = feedparser.parse(resp.content)
         except Exception as exc:  # noqa: BLE001
             print(f"  ! Failed to fetch/parse: {exc}", file=sys.stderr)
             continue
