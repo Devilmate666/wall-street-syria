@@ -101,6 +101,12 @@ REQUEST_HEADERS = {
 }
 REQUEST_TIMEOUT_SECONDS = 20
 
+# Some sites (Al Arabiya included) block requests coming from cloud/datacenter
+# IP ranges like GitHub Actions runners, even with browser-like headers. If a
+# direct fetch gets blocked (403/429/etc), retry once through a public
+# read-only proxy that fetches the URL server-side from a different IP.
+PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -240,6 +246,30 @@ def build_message(feed_name: str, entry) -> str:
     return "\n\n".join(parts)
 
 
+def fetch_feed(name: str, url: str):
+    """Fetch and parse a feed. Tries a direct request first; if that's
+    blocked (403/429/other error), retries once through a public proxy
+    that fetches server-side from a different IP. Returns a feedparser
+    result, or None if both attempts failed."""
+    try:
+        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return feedparser.parse(resp.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Direct fetch failed ({exc}); retrying via proxy...")
+
+    try:
+        from urllib.parse import quote
+
+        proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
+        resp = requests.get(proxy_url, timeout=REQUEST_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return feedparser.parse(resp.content)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Proxy fetch also failed: {exc}", file=sys.stderr)
+        return None
+
+
 def send_to_telegram(text: str) -> bool:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
@@ -272,12 +302,9 @@ def run_one_pass(state: dict) -> int:
         name, url = feed["name"], feed["url"]
         print(f"Fetching: {name} ({url})")
 
-        try:
-            resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
-            resp.raise_for_status()
-            parsed = feedparser.parse(resp.content)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ! Failed to fetch/parse: {exc}", file=sys.stderr)
+        parsed = fetch_feed(name, url)
+        if parsed is None:
+            print(f"  ! Failed to fetch/parse (direct + proxy both failed)", file=sys.stderr)
             continue
 
         if parsed.bozo and not parsed.entries:
