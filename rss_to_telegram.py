@@ -19,27 +19,33 @@ from pathlib import Path
 
 import feedparser
 import requests
+from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 FEEDS = [
-    {"name": "Myfxbook Community", "url": "https://www.myfxbook.com/rss/forex-community-recent-topics"},
-    {"name": "Myfxbook News", "url": "https://www.myfxbook.com/rss/latest-forex-news"},
-    {"name": "Myfxbook Economic Calendar", "url": "https://www.myfxbook.com/rss/forex-economic-calendar-events"},
-    {"name": "Al Arabiya", "url": "https://www.alarabiya.net/feed/rss2/ar.xml"},
-    {"name": "Al Arabiya - العرب والعالم", "url": "https://www.alarabiya.net/feed/rss2/ar/arab-and-world.xml"},
-    {"name": "Al Arabiya - أسواق", "url": "https://www.alarabiya.net/feed/rss2/ar/aswaq.xml"},
+    {"name": "منتدى Myfxbook", "url": "https://www.myfxbook.com/rss/forex-community-recent-topics"},
+    {"name": "أخبار Myfxbook", "url": "https://www.myfxbook.com/rss/latest-forex-news"},
+    {"name": "التقويم الاقتصادي - Myfxbook", "url": "https://www.myfxbook.com/rss/forex-economic-calendar-events"},
+    {"name": "العربية", "url": "https://www.alarabiya.net/feed/rss2/ar.xml"},
+    {"name": "العربية - العرب والعالم", "url": "https://www.alarabiya.net/feed/rss2/ar/arab-and-world.xml"},
+    {"name": "العربية - أسواق", "url": "https://www.alarabiya.net/feed/rss2/ar/aswaq.xml"},
 ]
 
 STATE_FILE = Path(__file__).parent / "state.json"
 MAX_SEEN_PER_FEED = 300        # how many ids to remember per feed (keeps state.json small)
-MAX_ITEMS_PER_FEED_PER_RUN = 8  # safety cap so a feed reset doesn't spam the channel
+MAX_ITEMS_PER_FEED_PER_RUN = 50  # safety cap so a feed reset doesn't spam the channel
 SEND_DELAY_SECONDS = 1.2        # be polite to Telegram's rate limits
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# When true, the script marks every current entry in every feed as "seen"
+# WITHOUT sending any Telegram messages. Use this once to reset/prime the
+# state so that only articles published from now on get sent.
+BASELINE_ONLY = os.environ.get("BASELINE_ONLY", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,6 +76,30 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def is_mostly_arabic(text: str) -> bool:
+    if not text:
+        return True
+    arabic_chars = sum(1 for c in text if "\u0600" <= c <= "\u06FF")
+    letters = sum(1 for c in text if c.isalpha())
+    if letters == 0:
+        return True
+    return (arabic_chars / letters) > 0.5
+
+
+def to_arabic(text: str) -> str:
+    """Translate text to Arabic. If it's already Arabic, or translation
+    fails for any reason, just return the original text untouched."""
+    text = text.strip()
+    if not text or is_mostly_arabic(text):
+        return text
+    try:
+        translated = GoogleTranslator(source="auto", target="ar").translate(text)
+        return translated or text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Translation failed, using original text: {exc}", file=sys.stderr)
+        return text
+
+
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r"_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{c}" if c in escape_chars else c for c in text)
@@ -77,19 +107,19 @@ def escape_markdown_v2(text: str) -> str:
 
 def build_message(feed_name: str, entry) -> str:
     title = clean_text(entry.get("title", "(no title)"))
-    link = entry.get("link", "")
     summary = clean_text(entry.get("summary", ""))
-    if len(summary) > 300:
-        summary = summary[:297] + "..."
+    if len(summary) > 400:
+        summary = summary[:397] + "..."
+
+    title_ar = to_arabic(title)
+    summary_ar = to_arabic(summary) if summary else ""
 
     parts = [
         f"*{escape_markdown_v2(feed_name)}*",
-        escape_markdown_v2(title),
+        escape_markdown_v2(title_ar),
     ]
-    if summary and summary != title:
-        parts.append(escape_markdown_v2(summary))
-    if link:
-        parts.append(escape_markdown_v2(link))
+    if summary_ar and summary_ar != title_ar:
+        parts.append(escape_markdown_v2(summary_ar))
     return "\n\n".join(parts)
 
 
@@ -99,7 +129,7 @@ def send_to_telegram(text: str) -> bool:
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "MarkdownV2",
-        "disable_web_page_preview": False,
+        "disable_web_page_preview": True,
     }
     resp = requests.post(url, json=payload, timeout=30)
     if resp.status_code != 200:
@@ -120,6 +150,9 @@ def main() -> None:
 
     state = load_state()
     total_sent = 0
+
+    if BASELINE_ONLY:
+        print("BASELINE_ONLY mode: marking all current items as seen, sending nothing.\n")
 
     for feed in FEEDS:
         name, url = feed["name"], feed["url"]
@@ -143,13 +176,18 @@ def main() -> None:
         entries = list(reversed(parsed.entries))
 
         for entry in entries:
-            if sent_this_feed >= MAX_ITEMS_PER_FEED_PER_RUN:
-                print(f"  ~ Hit per-run cap ({MAX_ITEMS_PER_FEED_PER_RUN}) for this feed, will catch the rest next run.")
-                break
-
             eid = entry_id(entry)
             if eid in seen_ids:
                 continue
+
+            if BASELINE_ONLY:
+                # Just record it as seen, don't send anything.
+                new_ids_this_run.append(eid)
+                continue
+
+            if sent_this_feed >= MAX_ITEMS_PER_FEED_PER_RUN:
+                print(f"  ~ Hit per-run cap ({MAX_ITEMS_PER_FEED_PER_RUN}) for this feed, will catch the rest next run.")
+                break
 
             message = build_message(name, entry)
             ok = send_to_telegram(message)
@@ -161,6 +199,9 @@ def main() -> None:
                 print(f"  -> sent: {clean_text(entry.get('title', ''))[:80]}")
 
             time.sleep(SEND_DELAY_SECONDS)
+
+        if BASELINE_ONLY and new_ids_this_run:
+            print(f"  ~ Marked {len(new_ids_this_run)} existing item(s) as seen (no messages sent).")
 
         if new_ids_this_run:
             updated = list(seen_ids.union(new_ids_this_run))
