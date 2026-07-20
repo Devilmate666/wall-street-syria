@@ -12,6 +12,7 @@ Required environment variables (set as GitHub Actions secrets):
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from html import unescape
@@ -26,9 +27,7 @@ from deep_translator import GoogleTranslator
 # ---------------------------------------------------------------------------
 
 FEEDS = [
-    {"name": "منتدى Myfxbook", "url": "https://www.myfxbook.com/rss/forex-community-recent-topics"},
     {"name": "أخبار Myfxbook", "url": "https://www.myfxbook.com/rss/latest-forex-news"},
-    {"name": "التقويم الاقتصادي - Myfxbook", "url": "https://www.myfxbook.com/rss/forex-economic-calendar-events"},
     {"name": "العربية", "url": "https://www.alarabiya.net/feed/rss2/ar.xml"},
     {"name": "العربية - العرب والعالم", "url": "https://www.alarabiya.net/feed/rss2/ar/arab-and-world.xml"},
     {"name": "العربية - أسواق", "url": "https://www.alarabiya.net/feed/rss2/ar/aswaq.xml"},
@@ -71,8 +70,18 @@ def entry_id(entry) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+BBCODE_QUOTE_RE = re.compile(r"\[quote\].*?\[/quote\]", re.DOTALL | re.IGNORECASE)
+BBCODE_TAG_RE = re.compile(r"\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]")
+
+
 def clean_text(text: str) -> str:
-    text = unescape(text or "")
+    if not text:
+        return ""
+    text = BBCODE_QUOTE_RE.sub("", text)   # drop quoted/reply blocks
+    text = BBCODE_TAG_RE.sub("", text)     # drop remaining [tag] markup
+    text = HTML_TAG_RE.sub(" ", text)      # strip actual HTML tags
+    text = unescape(text)                  # decode entities (&amp; etc.)
     return " ".join(text.split())
 
 
@@ -114,10 +123,7 @@ def build_message(feed_name: str, entry) -> str:
     title_ar = to_arabic(title)
     summary_ar = to_arabic(summary) if summary else ""
 
-    parts = [
-        f"*{escape_markdown_v2(feed_name)}*",
-        escape_markdown_v2(title_ar),
-    ]
+    parts = [escape_markdown_v2(title_ar)]
     if summary_ar and summary_ar != title_ar:
         parts.append(escape_markdown_v2(summary_ar))
     return "\n\n".join(parts)
@@ -169,8 +175,12 @@ def main() -> None:
             continue
 
         seen_ids = set(state.get(url, []))
+        is_new_feed = url not in state
         new_ids_this_run = []
         sent_this_feed = 0
+
+        if is_new_feed and not BASELINE_ONLY:
+            print("  ~ First time seeing this feed: priming silently, no messages will be sent for its current backlog.")
 
         # feed entries are usually newest-first; reverse so we post oldest -> newest
         entries = list(reversed(parsed.entries))
@@ -180,7 +190,7 @@ def main() -> None:
             if eid in seen_ids:
                 continue
 
-            if BASELINE_ONLY:
+            if BASELINE_ONLY or is_new_feed:
                 # Just record it as seen, don't send anything.
                 new_ids_this_run.append(eid)
                 continue
