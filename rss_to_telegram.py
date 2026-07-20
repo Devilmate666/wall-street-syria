@@ -42,26 +42,18 @@ from deep_translator import GoogleTranslator
 # ---------------------------------------------------------------------------
 
 FEEDS = [
-    {"name": "العربية", "url": "https://www.alarabiya.net/feed/rss2/ar.xml"},
-    {"name": "العربية - العرب والعالم", "url": "https://www.alarabiya.net/feed/rss2/ar/arab-and-world.xml"},
-    {"name": "العربية - أسواق", "url": "https://www.alarabiya.net/feed/rss2/ar/aswaq.xml"},
-    {"name": "الشرق الأوسط", "url": "https://aawsat.com/feed"},
-    {"name": "سكاي نيوز عربية", "url": "https://www.skynewsarabia.com/web/rss/home.xml"},
+    {"name": "Forex Bundle", "url": "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml"},
 ]
 
-# Only these two feeds are broad, general-news firehoses (sports, entertainment,
-# local crime, etc all mixed in) so they need topic filtering. The Al Arabiya
-# "arab-and-world" and "aswaq" (markets) feeds are already reasonably on-topic,
-# and the main Al Arabiya feed is kept as-is too, but you can add it here if it
-# ever gets noisy.
-FEEDS_NEEDING_TOPIC_FILTER = {
-    "https://aawsat.com/feed",
-    "https://www.skynewsarabia.com/web/rss/home.xml",
-}
+# No topic filtering needed anymore -- the RSS.app bundle is already curated
+# to just the sources you picked, so everything in it is on-topic.
+FEEDS_NEEDING_TOPIC_FILTER = set()
 
 # Keywords used to decide if a story from a general-news feed is relevant to
 # forex/gold trading or major Middle East / US politics. Case-insensitive
-# substring match against the (already-Arabic) title + summary.
+# substring match against the (already-Arabic) title + summary. Unused while
+# FEEDS_NEEDING_TOPIC_FILTER is empty, kept here in case you add a broad
+# general-news feed back in later.
 TOPIC_KEYWORDS = [
     # markets / forex / gold
     "الذهب", "فوركس", "دولار", "اليورو", "البورصة", "الأسهم", "الأسواق",
