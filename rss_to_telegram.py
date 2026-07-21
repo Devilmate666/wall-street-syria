@@ -221,11 +221,43 @@ def pick_emoji(title: str, summary: str) -> str:
     return DEFAULT_EMOJI
 
 
-def build_message(feed_name: str, entry) -> str:
+def extract_image_url(entry) -> str:
+    """Pull the best available image URL from a feed entry, checking the
+    common places different feeds put it. Returns '' if none found."""
+    media_content = entry.get("media_content") or []
+    for m in media_content:
+        if m.get("url") and m.get("medium", "image") in ("image", None):
+            return m["url"]
+
+    media_thumb = entry.get("media_thumbnail") or []
+    for m in media_thumb:
+        if m.get("url"):
+            return m["url"]
+
+    for enc in entry.get("links", []) or []:
+        if enc.get("rel") == "enclosure" and str(enc.get("type", "")).startswith("image"):
+            return enc.get("href", "")
+
+    # Fall back to sniffing the raw (uncleaned) summary/description for <img src="...">
+    raw_html = entry.get("summary", "") or entry.get("description", "")
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', raw_html)
+    if match:
+        return match.group(1)
+
+    return ""
+
+
+def build_message(feed_name: str, entry) -> tuple[str, str]:
+    """Returns (message_text, image_url). image_url is '' if none found."""
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
-    if len(summary) > 400:
-        summary = summary[:397] + "..."
+
+    image_url = extract_image_url(entry)
+    # Telegram photo captions are capped at 1024 chars (vs 4096 for plain
+    # text), so trim the summary tighter when we know a photo will be sent.
+    summary_limit = 200 if image_url else 400
+    if len(summary) > summary_limit:
+        summary = summary[: summary_limit - 3] + "..."
 
     title_ar = to_arabic(title)
     summary_ar = to_arabic(summary) if summary else ""
@@ -235,7 +267,7 @@ def build_message(feed_name: str, entry) -> str:
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
     if summary_ar and summary_ar != title_ar:
         parts.append(escape_markdown_v2(summary_ar))
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), image_url
 
 
 def fetch_feed(name: str, url: str):
@@ -275,6 +307,38 @@ def send_to_telegram(text: str) -> bool:
         print(f"  ! Telegram error {resp.status_code}: {resp.text}", file=sys.stderr)
         return False
     return True
+
+
+def send_to_telegram_photo(image_url: str, caption: str) -> bool:
+    """Send a photo with a caption. Returns False on any failure so the
+    caller can fall back to a text-only message (e.g. broken image URL,
+    image too large, unsupported format, caption too long, etc.)."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": image_url,
+        "caption": caption,
+        "parse_mode": "MarkdownV2",
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! sendPhoto request failed: {exc}", file=sys.stderr)
+        return False
+    if resp.status_code != 200:
+        print(f"  ! Telegram sendPhoto error {resp.status_code}: {resp.text}", file=sys.stderr)
+        return False
+    return True
+
+
+def send_post(text: str, image_url: str) -> bool:
+    """Send a post, with an image if one was found. Falls back to a
+    text-only message if sending the photo fails for any reason."""
+    if image_url:
+        if send_to_telegram_photo(image_url, text):
+            return True
+        print("  ~ photo send failed, falling back to text-only message")
+    return send_to_telegram(text)
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +414,8 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message = build_message(name, latest_entry)
-                ok = send_to_telegram(message)
+                message, image_url = build_message(name, latest_entry)
+                ok = send_post(message, image_url)
 
                 if ok:
                     newly_seen_ids.append(latest_eid)
