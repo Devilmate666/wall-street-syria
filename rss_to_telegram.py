@@ -311,44 +311,57 @@ def run_one_pass(state: dict) -> int:
         if is_new_feed and not BASELINE_ONLY:
             print("  ~ First time seeing this feed: priming silently, no messages will be sent for its current backlog.")
 
-        # feed entries are usually newest-first; reverse so we post oldest -> newest
+        # feed entries are usually newest-first; reverse so oldest is first,
+        # newest is last -- lets us easily grab "the latest new one."
         entries = list(reversed(parsed.entries))
 
-        for entry in entries:
-            eid = entry_id(entry)
-            if eid in seen_ids:
-                continue
-
-            if BASELINE_ONLY or is_new_feed:
-                # Just record it as seen, don't send anything.
-                newly_seen_ids.append(eid)
-                continue
-
-            if url in FEEDS_NEEDING_TOPIC_FILTER:
-                raw_title = clean_text(entry.get("title", ""))
-                raw_summary = clean_text(entry.get("summary", ""))
-                if not matches_topic(raw_title, raw_summary):
-                    newly_seen_ids.append(eid)  # mark seen, skip silently
+        if BASELINE_ONLY or is_new_feed:
+            for entry in entries:
+                eid = entry_id(entry)
+                if eid not in seen_ids:
+                    newly_seen_ids.append(eid)
+        else:
+            # Collect every entry that's genuinely new (and passes the topic
+            # filter, if any) -- but only ever SEND the most recent one.
+            # Everything older than that gets marked seen and discarded
+            # silently, so a burst of new items never floods the channel.
+            candidates = []  # (eid, entry)
+            for entry in entries:
+                eid = entry_id(entry)
+                if eid in seen_ids:
                     continue
 
-            if sent_this_feed >= MAX_ITEMS_PER_FEED_PER_RUN:
-                print(f"  ~ Hit per-pass cap ({MAX_ITEMS_PER_FEED_PER_RUN}) for this feed, will catch the rest next pass.")
-                break
+                if url in FEEDS_NEEDING_TOPIC_FILTER:
+                    raw_title = clean_text(entry.get("title", ""))
+                    raw_summary = clean_text(entry.get("summary", ""))
+                    if not matches_topic(raw_title, raw_summary):
+                        newly_seen_ids.append(eid)  # mark seen, skip silently
+                        continue
 
-            message = build_message(name, entry)
-            ok = send_to_telegram(message)
+                candidates.append((eid, entry))
 
-            if ok:
-                # Only mark as seen if it actually sent -- a failed send
-                # (rate limit, network blip, etc.) will be retried next pass.
-                newly_seen_ids.append(eid)
-                sent_this_feed += 1
-                total_sent += 1
-                print(f"  -> sent: {clean_text(entry.get('title', ''))[:80]}")
-            else:
-                print("  ~ will retry this item next pass")
+            if candidates:
+                if len(candidates) > 1:
+                    skipped_titles = [clean_text(e.get("title", ""))[:60] for _, e in candidates[:-1]]
+                    print(f"  ~ {len(candidates) - 1} older new item(s) discarded (only sending the latest):")
+                    for t in skipped_titles:
+                        print(f"      - {t}")
+                    # mark all but the last as seen so they're never sent later
+                    newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
-            time.sleep(SEND_DELAY_SECONDS)
+                latest_eid, latest_entry = candidates[-1]
+                message = build_message(name, latest_entry)
+                ok = send_to_telegram(message)
+
+                if ok:
+                    newly_seen_ids.append(latest_eid)
+                    sent_this_feed += 1
+                    total_sent += 1
+                    print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
+                else:
+                    print("  ~ send failed, will retry this one next pass")
+
+                time.sleep(SEND_DELAY_SECONDS)
 
         if BASELINE_ONLY and newly_seen_ids:
             print(f"  ~ Marked {len(newly_seen_ids)} existing item(s) as seen (no messages sent).")
