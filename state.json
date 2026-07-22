@@ -410,9 +410,10 @@
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
     "65b20949cd67ccb7f2288b0904247094dd3c742367a8b5f09a0a11858c04e2ae",
     "61793966745047fa1ab512f8b03773bfa28b23ae0d21d301261f9cad0d82dd8a",
-    "368308d6019eccfe40d73af5635a7fd7f6daa0edd6ff2abeee0ea2181237f42b",
     "f5ae549d06c287b850d60496462436e0e688b23ef16e24b2a0b48bcc859cf729",
+    "368308d6019eccfe40d73af5635a7fd7f6daa0edd6ff2abeee0ea2181237f42b",
     "7c26fb23a0bcddcd4020bd124bfb98a90ac0dab84a536d2f4dc2b709cf72173c",
+    "6b8be180a8d068c5f1775038820f2b90143c0831469d5c3e4e639015eba6ab8f",
     "85a352fe68295369772c87aab7cb33a77dafd53c274ecccca46490cbe7db482a",
     "65eafe6fbd46655e24b99031478b15b2340058152e7e25abd4892b422b425b25",
     "7a626b95c99af47e38d90db5d6cac95cf8b020ce32e499f13b81d6d794b46d42",
@@ -421,6 +422,7 @@
     "4c9d7b4f2c1bf4b85961a315066e6d1d0abc3aec61a93f11aab30033d3c1015b",
     "3b0c243f30f889000e3994b7ff7b9657b9ce2ba51104e17e04eb5b23c2462c21",
     "5329dd401da06930b16cda1dd2502dbe50a3ec6d6b2601fdaeee29e66237edfb",
+    "6bbad93f832d17de26bccbc3c9caf1794ccfbd1dc84f40b270287c2a7492e57d",
     "ae651873c9eb7419ac4dc917bc3094ce9fdc551e89832562ecf3bfa8a9a2f072",
     "5bc70cbfba827bc1943450d14b39e3ef91a4e16146ef82c68b1fa286403ab902",
     "ad1d58fe58920aa5848ead8ac7673f07c7a89acea606bd7c0f0c4d5dc4dae066",
@@ -437,6 +439,7 @@
     "b6e31185eb6810d225dd6eb9ce3b5bca07a4b305ac5276e649ec4407f2a0a5d1",
     "d88ae4e0cbc80b803143e91a5a8e40cd22a6e35076df6f9a35ae1cc0bbaea946",
     "00465fce28cf9d68a6e8deb80847dbce17a50d286faa61fe64e74d7b1e84b741",
+    "6f5980ff3bf2ad417137f4fe6361ab0953278ec75f86f8dfeb60ca5fd7b7bd34",
     "bdd22b2d5a4bd9fb00dce2092d07be449a8e88e401ce2793b28882a061cb891c",
     "001eed38007c19f6c7d6a890ab268c17a81eb7b4e216cb72fcf9c1e0d0db685d",
     "9ec890d86fcb7fba58fd1680e3f2c1938ccf02cf4c0cf3c8b13588b26a620431",
@@ -525,7 +528,6 @@
     "0c2c1dc88450991e1c942482a9b4cb7e4c079a575d9b9b71593c1bc132a0e90d",
     "a9a158747964b6c06512221f8327a67e69da0c8f059928708efd67fd79e716e5",
     "2f6faf0c1260dce5e87a165c605b8037fa284ecdc983b21f102b4d9713282e3b",
-    "668eede24efb43cb885ebb2c98042593bdb9b1f5ce6cc44afb5c1614e2be9331",
     "3a89ff0bbc093aee0027cf71d796b47509d90ea081bef274f432fa857695a7f4",
     "7df1f66c14a70e39f3b8a5d2724af121a0c343e74b751f50453945c0d79c0c62",
     "94889c4fd751bb4bf3ed173e8a45eeb6dd2bac87855d8f09532a71f6cca8e5b7",
@@ -556,6 +558,7 @@
     "dfff219dbcfee961c384fa53eebcdb49c373a7cea3beea870f90f4f8b796e77d",
     "1522e51e76b5aa701bc6714e694172db92349a55b9b3586b0313ee4cf5708ea9",
     "391e783def5e0f4e2f9b8dfef8e49a3ea8edcb599b8fa64b4eb6d3a0adeb93a1",
+    "452f67a3139d29f0a0d81b5f60ab59370a678dc598a718f90b8b34559f85e3d0",
     "8e43796d8d13175aaa3cc522240b5231d464d91fe85b66b965f68cf9f8135e8a",
     "f43d8775d6d1e4b7b2dd22e6a0bc66f79383c08f41aa7c801fd133007a60fcf2",
     "a3e747da25429e5e9915f3e763fbb2fb19e22da7e5d8fb70b7bf0eec97286004",
@@ -623,13 +626,14 @@
     "1a402bc2d09202f30e6ed9a86dc2f182040b6ea75b3ec54819e51a6c20890149",
     "41c9496c22e94d9ee42b1804cba1d1d73d101d2c692bad5914ec6c407aacca5a",
     "17cb884a38876751912f84ce953f6c61d39451f9147666a510b032044b24897e",
-    "6f5980ff3bf2ad417137f4fe6361ab0953278ec75f86f8dfeb60ca5fd7b7bd34"
+    "668eede24efb43cb885ebb2c98042593bdb9b1f5ce6cc44afb5c1614e2be9331"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::titles": [
-    "سعرالنفطالخاميقتربمنهدفناالسعريتوقعاتاليوم",
     "الدولارالنيوزيلندييتراجعمعارتفاعالطلبعلىالملاذالآمنالذييدعمالدولارالأمريكي",
+    "بياناتمؤشرأسعارالمستهلكcpiفيالمملكةالمتحدةمنالمتوقعأنتظهرحاجةأقلإلىرفعأسعارالفائدةمنقبلبنكإنجلتراboe",
     "الدولارالأسترالييرتفعفوق07000علىخلفيةموقفبنكالاحتياطيالأستراليالمتشدد",
     "اليناليابانييواجهصعوبةبالقربمنأدنىمستوىلهفيأربعةعقودمقابلالدولارالأمريكي",
-    "اليورويحافظعلىمكاسبهفوق11400وسطتوقعاتمتشددةللبنكالمركزيالأوروبيecbرغمالتوتراتبينالولاياتالمتحدةوإيران"
+    "اليورويحافظعلىمكاسبهفوق11400وسطتوقعاتمتشددةللبنكالمركزيالأوروبيecbرغمالتوتراتبينالولاياتالمتحدةوإيران",
+    "سعرالنفطالخاميقتربمنهدفناالسعريتوقعاتاليوم"
   ]
 }
