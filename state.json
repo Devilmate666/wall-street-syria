@@ -410,8 +410,8 @@
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
     "65b20949cd67ccb7f2288b0904247094dd3c742367a8b5f09a0a11858c04e2ae",
     "61793966745047fa1ab512f8b03773bfa28b23ae0d21d301261f9cad0d82dd8a",
-    "f5ae549d06c287b850d60496462436e0e688b23ef16e24b2a0b48bcc859cf729",
     "368308d6019eccfe40d73af5635a7fd7f6daa0edd6ff2abeee0ea2181237f42b",
+    "f5ae549d06c287b850d60496462436e0e688b23ef16e24b2a0b48bcc859cf729",
     "7c26fb23a0bcddcd4020bd124bfb98a90ac0dab84a536d2f4dc2b709cf72173c",
     "6b8be180a8d068c5f1775038820f2b90143c0831469d5c3e4e639015eba6ab8f",
     "85a352fe68295369772c87aab7cb33a77dafd53c274ecccca46490cbe7db482a",
@@ -439,7 +439,6 @@
     "b6e31185eb6810d225dd6eb9ce3b5bca07a4b305ac5276e649ec4407f2a0a5d1",
     "d88ae4e0cbc80b803143e91a5a8e40cd22a6e35076df6f9a35ae1cc0bbaea946",
     "00465fce28cf9d68a6e8deb80847dbce17a50d286faa61fe64e74d7b1e84b741",
-    "6f5980ff3bf2ad417137f4fe6361ab0953278ec75f86f8dfeb60ca5fd7b7bd34",
     "bdd22b2d5a4bd9fb00dce2092d07be449a8e88e401ce2793b28882a061cb891c",
     "001eed38007c19f6c7d6a890ab268c17a81eb7b4e216cb72fcf9c1e0d0db685d",
     "9ec890d86fcb7fba58fd1680e3f2c1938ccf02cf4c0cf3c8b13588b26a620431",
@@ -449,6 +448,8 @@
     "131d36a4b788e08e909fda4b2e79480846eca83ad0f38fedd5f7871e54b93d8e",
     "75ea9a11fc5931931af085cd8236784e7705305ae2030c5c2f2a2564bfaaa8bc",
     "43d1dc8c52f805c759ff73d7b4945dceac70f6ee48f5b67a5f3f1af8e9394f6e",
+    "0f57e07465288d2053bcad3d9e26d3a0ad68c4d5f8e5a1e05fd5af1cea35efd0",
+    "0893431f370425155282d64c4938ae1838b53ab8e4ca18ce9ceab1710a7421e1",
     "2cb8324ba06c088d1818ab1560e0e6017014adac5669fd2603cb555c9529ac60",
     "2735726b35285d378dcdfd5b578008d679fc3eb5383149d0ec307db6a2b7f682",
     "815fea5dad774071652d283c850aca774dc0b61ace367d48b66e7445c076b987",
@@ -528,6 +529,7 @@
     "0c2c1dc88450991e1c942482a9b4cb7e4c079a575d9b9b71593c1bc132a0e90d",
     "a9a158747964b6c06512221f8327a67e69da0c8f059928708efd67fd79e716e5",
     "2f6faf0c1260dce5e87a165c605b8037fa284ecdc983b21f102b4d9713282e3b",
+    "668eede24efb43cb885ebb2c98042593bdb9b1f5ce6cc44afb5c1614e2be9331",
     "3a89ff0bbc093aee0027cf71d796b47509d90ea081bef274f432fa857695a7f4",
     "7df1f66c14a70e39f3b8a5d2724af121a0c343e74b751f50453945c0d79c0c62",
     "94889c4fd751bb4bf3ed173e8a45eeb6dd2bac87855d8f09532a71f6cca8e5b7",
@@ -626,13 +628,14 @@
     "1a402bc2d09202f30e6ed9a86dc2f182040b6ea75b3ec54819e51a6c20890149",
     "41c9496c22e94d9ee42b1804cba1d1d73d101d2c692bad5914ec6c407aacca5a",
     "17cb884a38876751912f84ce953f6c61d39451f9147666a510b032044b24897e",
-    "668eede24efb43cb885ebb2c98042593bdb9b1f5ce6cc44afb5c1614e2be9331"
+    "6f5980ff3bf2ad417137f4fe6361ab0953278ec75f86f8dfeb60ca5fd7b7bd34"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::titles": [
     "الدولارالنيوزيلندييتراجعمعارتفاعالطلبعلىالملاذالآمنالذييدعمالدولارالأمريكي",
     "بياناتمؤشرأسعارالمستهلكcpiفيالمملكةالمتحدةمنالمتوقعأنتظهرحاجةأقلإلىرفعأسعارالفائدةمنقبلبنكإنجلتراboe",
     "الدولارالأسترالييرتفعفوق07000علىخلفيةموقفبنكالاحتياطيالأستراليالمتشدد",
     "اليناليابانييواجهصعوبةبالقربمنأدنىمستوىلهفيأربعةعقودمقابلالدولارالأمريكي",
+    "الرئيسالأمريكيدونالدترامبيوافقعلىاتفاقنوويبينالولاياتالمتحدةوالسعودية",
     "اليورويحافظعلىمكاسبهفوق11400وسطتوقعاتمتشددةللبنكالمركزيالأوروبيecbرغمالتوتراتبينالولاياتالمتحدةوإيران",
     "سعرالنفطالخاميقتربمنهدفناالسعريتوقعاتاليوم"
   ]
