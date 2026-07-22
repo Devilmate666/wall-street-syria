@@ -126,7 +126,14 @@ def save_state(state: dict) -> None:
 
 
 def commit_and_push_state() -> None:
-    """Commit + push state.json if it changed. Never raises -- just logs."""
+    """Commit + push state.json if it changed. Never raises -- just logs.
+    If the push is rejected (e.g. a previous job's commit landed a moment
+    ago and we're now behind), pulls with rebase and retries once instead
+    of giving up -- this is what prevents the "sent twice around the
+    restart" race: without this, a stale push failure would silently
+    leave this job's state.json ahead only in its local working copy,
+    and the next job could start from the older, already-pushed version
+    and re-send whatever this job just sent."""
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain", str(STATE_FILE)],
@@ -144,10 +151,27 @@ def commit_and_push_state() -> None:
             ["git", "commit", "-m", "chore: update seen RSS items [skip ci]"],
             check=True,
         )
-        subprocess.run(["git", "push"], check=True)
+
+        push = subprocess.run(["git", "push"], capture_output=True, text=True)
+        if push.returncode != 0:
+            print("  ~ push rejected (likely a race with another job), pulling + retrying once...")
+            subprocess.run(["git", "pull", "--rebase"], check=True)
+            subprocess.run(["git", "push"], check=True)
+
         print("  ~ committed + pushed state.json")
     except subprocess.CalledProcessError as exc:
         print(f"  ! git commit/push failed (will retry next pass): {exc}", file=sys.stderr)
+
+
+def normalize_title(title: str) -> str:
+    """Collapse a title down to a stable comparison key: lowercased,
+    punctuation/whitespace stripped. Used as a backstop dedup check in
+    case two different feed entries (e.g. same article re-fetched with a
+    different id/link, such as a tracking-param change) are really the
+    same story."""
+    text = title.lower().strip()
+    text = re.sub(r"[^\w\u0600-\u06FF]+", "", text)
+    return text
 
 
 def entry_id(entry) -> str:
@@ -399,8 +423,10 @@ def run_one_pass(state: dict) -> int:
             continue
 
         seen_ids = set(state.get(url, []))
+        seen_titles = set(state.get(url + "::titles", []))
         is_new_feed = url not in state
-        newly_seen_ids = []   # items to mark seen: skipped-by-filter, baseline, AND successful sends
+        newly_seen_ids = []     # items to mark seen: skipped-by-filter, baseline, AND successful sends
+        newly_seen_titles = []  # normalized titles of anything actually sent, for the dedup backstop
         sent_this_feed = 0
 
         if is_new_feed and not BASELINE_ONLY:
@@ -415,6 +441,7 @@ def run_one_pass(state: dict) -> int:
                 eid = entry_id(entry)
                 if eid not in seen_ids:
                     newly_seen_ids.append(eid)
+                    newly_seen_titles.append(normalize_title(clean_text(entry.get("title", ""))))
         else:
             # Collect every entry that's genuinely new (and passes the topic
             # filter, if any) -- but only ever SEND the most recent one.
@@ -433,6 +460,15 @@ def run_one_pass(state: dict) -> int:
                         newly_seen_ids.append(eid)  # mark seen, skip silently
                         continue
 
+                # Backstop dedup: same normalized title already sent
+                # recently (e.g. the same article re-fetched with a
+                # rotated id/link around a job restart) -- mark seen,
+                # don't send it again.
+                norm = normalize_title(clean_text(entry.get("title", "")))
+                if norm and norm in seen_titles:
+                    newly_seen_ids.append(eid)
+                    continue
+
                 candidates.append((eid, entry))
 
             if candidates:
@@ -450,6 +486,7 @@ def run_one_pass(state: dict) -> int:
 
                 if ok:
                     newly_seen_ids.append(latest_eid)
+                    newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
@@ -465,6 +502,10 @@ def run_one_pass(state: dict) -> int:
             updated = list(seen_ids.union(newly_seen_ids))
             # keep only the most recent MAX_SEEN_PER_FEED ids
             state[url] = updated[-MAX_SEEN_PER_FEED:]
+
+        if newly_seen_titles:
+            updated_titles = list(seen_titles.union(t for t in newly_seen_titles if t))
+            state[url + "::titles"] = updated_titles[-MAX_SEEN_PER_FEED:]
 
     return total_sent
 
