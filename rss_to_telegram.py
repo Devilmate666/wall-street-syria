@@ -159,6 +159,33 @@ def entry_id(entry) -> str:
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 BBCODE_QUOTE_RE = re.compile(r"\[quote\].*?\[/quote\]", re.DOTALL | re.IGNORECASE)
 BBCODE_TAG_RE = re.compile(r"\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]")
+URL_RE = re.compile(r"https?://\S+")
+
+# Sentence-splitting delimiters (Arabic + Latin punctuation)
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟。])\s+")
+
+# Any sentence containing one of these is a "go watch the video" callout
+# that's meaningless without a link, so we drop the whole sentence.
+VIDEO_MENTION_MARKERS = [
+    "فيديو", "الفيديو", "شاهد", "مقطع مصور", "video", "youtube", "يوتيوب",
+]
+
+
+def strip_urls(text: str) -> str:
+    return URL_RE.sub("", text).strip()
+
+
+def strip_video_mentions(text: str) -> str:
+    """Remove sentences that tell the reader to go watch a video, since
+    there's no link included for them to actually do that."""
+    if not text:
+        return text
+    sentences = SENTENCE_SPLIT_RE.split(text)
+    kept = [
+        s for s in sentences
+        if not any(marker in s.lower() for marker in VIDEO_MENTION_MARKERS)
+    ]
+    return " ".join(s.strip() for s in kept if s.strip())
 
 
 def clean_text(text: str) -> str:
@@ -168,6 +195,8 @@ def clean_text(text: str) -> str:
     text = BBCODE_TAG_RE.sub("", text)     # drop remaining [tag] markup
     text = HTML_TAG_RE.sub(" ", text)      # strip actual HTML tags
     text = unescape(text)                  # decode entities (&amp; etc.)
+    text = strip_urls(text)                # remove any raw links
+    text = strip_video_mentions(text)      # remove "watch the video" callouts
     return " ".join(text.split())
 
 
@@ -253,11 +282,13 @@ def build_message(feed_name: str, entry) -> tuple[str, str]:
     summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
-    # Telegram photo captions are capped at 1024 chars (vs 4096 for plain
-    # text), so trim the summary tighter when we know a photo will be sent.
-    summary_limit = 200 if image_url else 400
+    # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
+    # Leave headroom for the emoji/title/markdown-escaping overhead, but
+    # otherwise let the full source summary through instead of cutting it
+    # short artificially.
+    summary_limit = 900 if image_url else 3500
     if len(summary) > summary_limit:
-        summary = summary[: summary_limit - 3] + "..."
+        summary = summary[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
 
     title_ar = to_arabic(title)
     summary_ar = to_arabic(summary) if summary else ""
