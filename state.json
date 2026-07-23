@@ -408,18 +408,17 @@
     "aa29c2d636573768445521fcde4380bf738557afc6fc384dd1c825d4dcb5aaec"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
-    "ae651873c9eb7419ac4dc917bc3094ce9fdc551e89832562ecf3bfa8a9a2f072",
     "53d18b6a46475e3d456df26b822934453e6351a6693b020a82402ee6661f7512",
-    "7900021651935ca90200aa810ff8b65f6400811ddb4bee3f1c0a64b4be5468b5",
     "287c189e5891e46267ea7a5abd271909eca589dad3e3778729f13b0821874a14",
+    "7900021651935ca90200aa810ff8b65f6400811ddb4bee3f1c0a64b4be5468b5",
     "83a320e29406740fb2d31f5771a0055e8078bcf0eb9d0b400370ddfc8b96e4e5",
     "913ed8d96d46f7352f9620b1e089092980f49ded61ed1760990ccdfc9d489880",
     "83aa8709b668673ea7c74aa8405c37c7ed917b3c5799173402af11c012f3baed",
     "a6ae7616390354c8fe8fe74761c99bca02dc5dfb73b8a5212a3910bdd9c98c40",
     "368308d6019eccfe40d73af5635a7fd7f6daa0edd6ff2abeee0ea2181237f42b",
     "aefef73e67ea2fdd8d5a5c72b4a2aca64b3db418a74e014a8f4ae3839fc4dd5d",
-    "3c28728bcfa9949069f5f7110ea93f16885976c0757d120e36290ad739f396b9",
     "2fda86fc82c3a4ed47d2a73b16e13201713afe23fd6c4c67b78f57b0926e4b7b",
+    "3c28728bcfa9949069f5f7110ea93f16885976c0757d120e36290ad739f396b9",
     "8dfb4626d2a09adbdae76b963f75128876b57efe4719a66025692804bea2af47",
     "3459f399de3235bdc00d0c1f6ebe968259899bc82fd549b2e69dd7efc81201e8",
     "627efb7b093319f3590d789f51631554f2dd131c46770200eb5c283498c25330",
@@ -474,6 +473,7 @@
     "a22ec461e1ac4c488bf118d02b6cc0336781e7f7bd428814882f4d87b1e3daac",
     "92c09e84f6d09c2021dc2a98e2e659663e372c7c861f9e46f2cb72871375a31b",
     "e3d4c0420b6e9e715e5c778d9f304c0b9374bca7e86a70f2eaf886dbe07f9ed1",
+    "5a20c614679e7dbfab7429d8be51a6e5c25ff1d17908c4d5bec2e973a7e7fb98",
     "2ddd0f0d14e300fb523bc44f8a784bd0212aef0e0a388b1311d2ef9742bf2a69",
     "4bbbe3fe0188d7d4fe5a50a699551e7c396e9129f22a30853f3d3f2292324ae2",
     "892acb7f43fa3396913ab65e349e232f4328845a5f3b315e3a5c5ebea7d6c1ca",
@@ -711,6 +711,7 @@
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::titles": [
     "اليورويحققمكاسبفوق11400معلهجةمتشددةمنالبنكالمركزيالأوروبيecb",
+    "البنكالدولييحذرمنخطورةتداعياتحربإيرانعلىالاقتصادالعالمي",
     "الدولارالكندييجددعمامنارتفاعأسعارالنفط،وتراجعالدولارالأمريكي",
     "ftse100movingintightrangeasstocksturninmixedperformance",
     "الصينالتنفيذالماليسيدعمالنمو",
@@ -722,6 +723,8 @@
     "losingstreakmaycontinueforhongkongstockmarket",
     "بياناتمؤشرأسعارالمستهلكcpiفيالمملكةالمتحدةمنالمتوقعأنتظهرحاجةأقلإلىرفعأسعارالفائدةمنقبلبنكإنجلتراboe",
     "housetakesfirststeptounlockiranwarfundingbutfateinsenateuncertainwithmeasuretiedtosaveamericaact",
+    "secretservicewarnsthreatleveloffthechartsasusgovernmentofficialstargetedin10000cases",
+    "سعرالنفطالخاميقتربمنهدفناالسعريتوقعاتاليوم",
     "southkoreagdpgains06inq2",
     "أوبنأيهآيتكشفعنحادثأمنيغيرمسبوقخلالاختبارنماذجالذكاءالاصطناعي",
     "الفورنتالمجريمسارالتيسيرالنقديللبنكالوطنيالمجريnbhيشكلآفاقالفورنتhuf",
@@ -754,7 +757,6 @@
     "اليورويحافظعلىمكاسبهفوق11400وسطتوقعاتمتشددةللبنكالمركزيالأوروبيecbرغمالتوتراتبينالولاياتالمتحدةوإيران",
     "foxnewspollvoterswantmajorchangeamideconomicandpoliticaldiscontent",
     "جسرواحدلكلناقلةيرتفعمؤشرداوجونزمعحصولالتصعيدعلىقائمةأسعار",
-    "توقعاتزوجالدولارالأستراليالدولارالأمريكيaudusdمحصورداخلنطاققرب07000،يترقبمستوىفيبو382٪",
     "تراجعمعظمبورصاتالخليجمعتصاعدالصراعبينأميركاوإيران",
     "اليناليابانييواجهصعوبةبالقربمنأدنىمستوىلهفيأربعةعقودمقابلالدولارالأمريكي",
     "اليورويواجهصعوبةفيمواصلةالمكاسبمعتلاقيآمالالبنكالمركزيالأوروبيecbمعمخاطرالشرقالأوسط",
@@ -769,9 +771,8 @@
     "trumpscoffsataffordabilityashetoutseconomicpoliciesatgeorgiarally",
     "straitofhormuztrumpthreatenstotargetiransbridgesandpowerplantsifattacksonshippersist",
     "الذهبيرتفعإلىأعلىمستوىفيأسبوعينوسطآمالالدبلوماسيةبينالولاياتالمتحدةوإيران",
-    "سعرالنفطالخاميقتربمنهدفناالسعريتوقعاتاليوم",
-    "oilextendsgainsastrumpthreatensstrikesoncriticaliranianinfrastructure",
+    "توقعاتزوجالدولارالأستراليالدولارالأمريكيaudusdمحصورداخلنطاققرب07000،يترقبمستوىفيبو382٪",
     "july23cedisellsatghs1230onforexmarketghs1161onboginterbank",
-    "البنكالدولييحذرمنخطورةتداعياتحربإيرانعلىالاقتصادالعالمي"
+    "oilextendsgainsastrumpthreatensstrikesoncriticaliranianinfrastructure"
   ]
 }
