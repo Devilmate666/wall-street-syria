@@ -73,6 +73,15 @@ def matches_topic(title: str, summary: str) -> bool:
 
 
 STATE_FILE = Path(__file__).parent / "state.json"
+
+# Small public log of the last few items actually posted to Telegram, kept
+# separate from state.json (which is just id hashes) so the website can
+# fetch this one directly from raw.githubusercontent.com and show real,
+# live headlines -- no third-party RSS-to-JSON converter, no CORS proxy,
+# just the bot's own real output.
+NEWS_FILE = Path(__file__).parent / "latest_news.json"
+MAX_NEWS_ITEMS = 8
+
 MAX_SEEN_PER_FEED = 300          # how many ids to remember per feed (keeps state.json small)
 MAX_ITEMS_PER_FEED_PER_RUN = 50  # safety cap so a feed reset doesn't spam the channel
 SEND_DELAY_SECONDS = 1.2         # be polite to Telegram's rate limits
@@ -349,7 +358,23 @@ def fetch_feed(name: str, url: str):
         return None
 
 
-def send_to_telegram(text: str) -> bool:
+# send_to_telegram / send_to_telegram_photo return one of three outcomes
+# instead of a plain bool. This matters because a network *timeout* is not
+# the same thing as Telegram *rejecting* the message: on a timeout we genuinely
+# don't know whether Telegram received and posted it before our connection
+# dropped. Treating "ambiguous" the same as "failed" is exactly what caused
+# duplicate posts before this fix -- a timed-out sendPhoto would trigger a
+# text fallback even when the photo had actually gone through, so the same
+# story appeared twice (once as a photo, once as text).
+#   "sent"      -> Telegram confirmed with HTTP 200, definitely posted once
+#   "failed"    -> Telegram gave a clear error (bad photo, bad markdown,
+#                   etc.) -- definitely NOT posted, safe to fall back / retry
+#   "ambiguous" -> connection dropped or timed out mid-request -- unknown
+#                   whether it posted. We treat this as "sent" to bias
+#                   toward never double-posting, at the small cost of
+#                   occasionally missing an item on a bad network blip.
+
+def send_to_telegram(text: str) -> str:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
@@ -357,17 +382,22 @@ def send_to_telegram(text: str) -> bool:
         "parse_mode": "MarkdownV2",
         "disable_web_page_preview": True,
     }
-    resp = requests.post(url, json=payload, timeout=30)
+    try:
+        resp = requests.post(url, json=payload, timeout=30)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        print(f"  ! sendMessage timed out / connection dropped: {exc}", file=sys.stderr)
+        return "ambiguous"
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! sendMessage request failed: {exc}", file=sys.stderr)
+        return "failed"
     if resp.status_code != 200:
         print(f"  ! Telegram error {resp.status_code}: {resp.text}", file=sys.stderr)
-        return False
-    return True
+        return "failed"
+    return "sent"
 
 
-def send_to_telegram_photo(image_url: str, caption: str) -> bool:
-    """Send a photo with a caption. Returns False on any failure so the
-    caller can fall back to a text-only message (e.g. broken image URL,
-    image too large, unsupported format, caption too long, etc.)."""
+def send_to_telegram_photo(image_url: str, caption: str) -> str:
+    """Send a photo with a caption. See outcome docstring above."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     payload = {
         "chat_id": CHAT_ID,
@@ -376,24 +406,42 @@ def send_to_telegram_photo(image_url: str, caption: str) -> bool:
         "parse_mode": "MarkdownV2",
     }
     try:
-        resp = requests.post(url, json=payload, timeout=30)
+        # Telegram has to fetch the remote image itself before it can
+        # respond, which can take a while -- give this more headroom than
+        # a plain text send so we don't time out on slow source images.
+        resp = requests.post(url, json=payload, timeout=45)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        print(f"  ! sendPhoto timed out / connection dropped: {exc}", file=sys.stderr)
+        return "ambiguous"
     except Exception as exc:  # noqa: BLE001
         print(f"  ! sendPhoto request failed: {exc}", file=sys.stderr)
-        return False
+        return "failed"
     if resp.status_code != 200:
         print(f"  ! Telegram sendPhoto error {resp.status_code}: {resp.text}", file=sys.stderr)
-        return False
-    return True
+        return "failed"
+    return "sent"
 
 
 def send_post(text: str, image_url: str) -> bool:
     """Send a post, with an image if one was found. Falls back to a
-    text-only message if sending the photo fails for any reason."""
+    text-only message only on a CLEAN photo failure -- never after an
+    ambiguous timeout, since that's what used to cause double-posts."""
     if image_url:
-        if send_to_telegram_photo(image_url, text):
+        status = send_to_telegram_photo(image_url, text)
+        if status == "sent":
             return True
-        print("  ~ photo send failed, falling back to text-only message")
-    return send_to_telegram(text)
+        if status == "ambiguous":
+            print("  ~ photo send was ambiguous (timeout) -- treating as sent to avoid posting it twice")
+            return True
+        print("  ~ photo send failed cleanly, falling back to text-only message")
+
+    status = send_to_telegram(text)
+    if status == "sent":
+        return True
+    if status == "ambiguous":
+        print("  ~ text send was ambiguous (timeout) -- treating as sent to avoid posting it twice")
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +577,18 @@ def main() -> None:
         print(f"\n=== Pass {pass_num} (elapsed {elapsed/60:.1f} min) ===")
 
         state = load_state()  # reload each pass in case of external changes
-        sent = run_one_pass(state)
+        try:
+            sent = run_one_pass(state)
+        except Exception as exc:  # noqa: BLE001
+            # `state` is mutated in place inside run_one_pass, so even if it
+            # blew up partway through (e.g. an unexpected error on feed 2 of
+            # N), whatever it already marked as sent for earlier feeds is
+            # still in this dict. Saving it here -- instead of losing it --
+            # is what prevents "job crashed mid-pass" from causing the next
+            # job to re-send items that already went out. The pass itself
+            # still counts as a failure; we just don't throw away its work.
+            print(f"! Unexpected error during pass, saving partial progress: {exc}", file=sys.stderr)
+            sent = 0
         save_state(state)
         commit_and_push_state()
 
