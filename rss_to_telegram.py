@@ -35,6 +35,7 @@ from pathlib import Path
 
 import feedparser
 import requests
+import trafilatura
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -233,6 +234,37 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def truncate_to_sentence(text: str, limit: int) -> str:
+    """Shorten `text` to fit within `limit` chars, but end on a complete
+    sentence (full stop / ? / ! / Arabic ؟ / etc.) instead of chopping a
+    word in half and slapping an ellipsis on it.
+
+    Walks the sentences (already split on the same punctuation used
+    elsewhere in this script) and keeps adding them while they still fit.
+    If even the first sentence is longer than `limit` (rare, but possible
+    for a feed with no punctuation at all), falls back to the old
+    word-boundary + ellipsis behaviour so we still respect Telegram's
+    caption/message size caps.
+    """
+    sentences = [s.strip() for s in SENTENCE_SPLIT_RE.split(text) if s.strip()]
+
+    kept = []
+    length = 0
+    for sentence in sentences:
+        # +1 for the joining space between sentences
+        added = len(sentence) + (1 if kept else 0)
+        if length + added > limit:
+            break
+        kept.append(sentence)
+        length += added
+
+    if kept:
+        return " ".join(kept)
+
+    # No single complete sentence fits -- fall back to a hard cut.
+    return text[: limit - 1].rsplit(" ", 1)[0] + "…"
+
+
 def is_mostly_arabic(text: str) -> bool:
     if not text:
         return True
@@ -309,10 +341,78 @@ def extract_image_url(entry) -> str:
     return ""
 
 
+TRUNCATION_ENDINGS = ("...", "…")
+
+
+def looks_truncated(text: str) -> bool:
+    """True if a (cleaned) summary appears to have been cut off mid-thought
+    by the RSS feed itself, e.g. ending in '...' or '…'."""
+    if not text:
+        return False
+    return text.rstrip().endswith(TRUNCATION_ENDINGS)
+
+
+def complete_truncated_summary(feed_summary: str, article_text: str) -> str:
+    """If `feed_summary` was cut off by the RSS feed (ends in '...'/'…'),
+    use the full source article to finish just that last, cut-off sentence
+    -- not to replace the whole summary with the whole article.
+
+    Works by finding where the tail end of the truncated snippet lines up
+    verbatim in the article (RSS feeds that truncate usually do so by
+    literally chopping the article's own first paragraph), then picking up
+    right there and reading only as far as the next sentence-ending mark.
+    If no reliable match is found (e.g. the feed wrote its own short teaser
+    instead of truncating the real text), the original summary is returned
+    unchanged rather than guessing.
+    """
+    incomplete = feed_summary.rstrip()
+    for suffix in TRUNCATION_ENDINGS:
+        if incomplete.endswith(suffix):
+            incomplete = incomplete[: -len(suffix)].rstrip()
+            break
+
+    if not incomplete or not article_text:
+        return feed_summary
+
+    # Anchor on the tail end of the cut-off snippet so we can locate the
+    # exact spot in the article where the feed's text stopped.
+    anchor_len = min(60, len(incomplete))
+    anchor = incomplete[-anchor_len:]
+    pos = article_text.find(anchor)
+
+    if pos == -1:
+        return feed_summary  # no confident match -- don't guess
+
+    resume_at = pos + len(anchor)
+    rest = article_text[resume_at:].strip()
+    if not rest:
+        return feed_summary
+
+    # Only take enough of the article to finish the sentence that was cut
+    # off -- the rest of the article is not included.
+    completion = SENTENCE_SPLIT_RE.split(rest, maxsplit=1)[0].strip()
+    if not completion:
+        return feed_summary
+
+    return f"{incomplete} {completion}".strip()
+
+
 def build_message(feed_name: str, entry) -> tuple[str, str]:
     """Returns (message_text, image_url). image_url is '' if none found."""
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
+
+    if looks_truncated(summary):
+        article_text = clean_text(fetch_article_text(entry.get("link", "")))
+        if article_text:
+            completed = complete_truncated_summary(summary, article_text)
+            if completed != summary:
+                summary = completed
+                print("  ~ completed a cut-off summary using the source article")
+            else:
+                print("  ~ cut-off summary didn't match the article text, leaving as-is")
+        else:
+            print("  ~ summary looked cut off but article fetch failed, leaving as-is")
 
     image_url = extract_image_url(entry)
     # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
@@ -321,7 +421,7 @@ def build_message(feed_name: str, entry) -> tuple[str, str]:
     # short artificially.
     summary_limit = 900 if image_url else 3500
     if len(summary) > summary_limit:
-        summary = summary[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
+        summary = truncate_to_sentence(summary, summary_limit)
 
     title_ar = to_arabic(title)
     summary_ar = to_arabic(summary) if summary else ""
@@ -332,6 +432,51 @@ def build_message(feed_name: str, entry) -> tuple[str, str]:
     if summary_ar and summary_ar != title_ar:
         parts.append(escape_markdown_v2(summary_ar))
     return "\n\n".join(parts), image_url
+
+
+def fetch_article_text(link: str) -> str:
+    """Fetch the actual article page (not the RSS feed) and extract its
+    full body text with trafilatura. This is what lets us post the real,
+    complete story instead of whatever (possibly truncated) snippet the
+    RSS feed's <summary> happened to include.
+
+    Same direct-then-proxy fetch pattern as fetch_feed(), since the sites
+    that block datacenter IPs for the feed itself will just as often block
+    the article page too. Returns '' on any failure -- callers fall back
+    to the feed's own summary in that case.
+    """
+    if not link:
+        return ""
+
+    html = None
+    try:
+        resp = requests.get(link, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ direct article fetch failed ({exc}); retrying via proxy...")
+        try:
+            from urllib.parse import quote
+
+            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(link, safe=""))
+            resp = requests.get(proxy_url, timeout=REQUEST_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            html = resp.text
+        except Exception as exc2:  # noqa: BLE001
+            print(f"  ! proxy article fetch also failed: {exc2}", file=sys.stderr)
+            return ""
+
+    try:
+        extracted = trafilatura.extract(
+            html,
+            include_comments=False,
+            include_tables=False,
+            favor_precision=True,
+        )
+        return extracted or ""
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! article text extraction failed: {exc}", file=sys.stderr)
+        return ""
 
 
 def fetch_feed(name: str, url: str):
