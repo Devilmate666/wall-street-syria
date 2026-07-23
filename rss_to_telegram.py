@@ -35,6 +35,7 @@ from pathlib import Path
 
 import feedparser
 import requests
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,25 @@ REQUEST_TIMEOUT_SECONDS = 20
 # direct fetch gets blocked (403/429/etc), retry once through a public
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
+
+# Some RSS.app summaries get cut short mid-sentence (ending in "...", "…",
+# etc). When that happens we fetch the actual article page and pull the
+# full body text instead, so the Telegram post isn't left dangling.
+ARTICLE_FETCH_TIMEOUT_SECONDS = 15
+TRUNCATION_MARKERS = ("...", "…", "[…]", "[...]")
+
+# Selectors tried in order to find the real article body on a source page.
+# Most news sites use one of these for their main content container.
+ARTICLE_CONTAINER_SELECTORS = [
+    "article",
+    "[itemprop='articleBody']",
+    "main",
+    ".article-content",
+    ".article-body",
+    ".post-content",
+    ".entry-content",
+    "#content",
+]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -314,6 +334,12 @@ def build_message(feed_name: str, entry) -> tuple[str, str]:
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
 
+    link = entry.get("link", "")
+    if link:
+        full_text = fetch_full_article(link)
+        if full_text and len(full_text) > len(summary):
+            summary = full_text
+
     image_url = extract_image_url(entry)
     # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
     # Leave headroom for the emoji/title/markdown-escaping overhead, but
@@ -356,6 +382,78 @@ def fetch_feed(name: str, url: str):
     except Exception as exc:  # noqa: BLE001
         print(f"  ! Proxy fetch also failed: {exc}", file=sys.stderr)
         return None
+
+
+def looks_truncated(text: str) -> bool:
+    """True if a (cleaned) summary appears to have been cut off mid-article
+    rather than ending naturally."""
+    if not text:
+        return False
+    return text.strip().endswith(TRUNCATION_MARKERS)
+
+
+def fetch_url_text(url: str) -> str:
+    """Fetch a URL's raw HTML, trying direct first, then a public proxy if
+    that's blocked -- same pattern as fetch_feed(). Returns '' on failure."""
+    try:
+        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Direct article fetch failed ({exc}); retrying via proxy...")
+
+    try:
+        from urllib.parse import quote
+
+        proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
+        resp = requests.get(proxy_url, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Proxy article fetch also failed: {exc}", file=sys.stderr)
+        return ""
+
+
+def extract_article_text(html: str) -> str:
+    """Best-effort extraction of the main article body from a source page.
+    Tries known content-container selectors first (picking whichever one
+    holds the most paragraph text, in case a selector matches something
+    like a related-articles sidebar), then falls back to every <p> on the
+    page if none of them match."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "aside", "header", "form", "iframe", "noscript"]):
+        tag.decompose()
+
+    candidates = []
+    for selector in ARTICLE_CONTAINER_SELECTORS:
+        for el in soup.select(selector):
+            if len(el.find_all("p")) >= 2:
+                candidates.append(el)
+
+    if candidates:
+        best = max(candidates, key=lambda el: sum(len(p.get_text()) for p in el.find_all("p")))
+        paragraphs = best.find_all("p")
+    else:
+        paragraphs = soup.find_all("p")
+
+    return " ".join(p.get_text(" ", strip=True) for p in paragraphs)
+
+
+def fetch_full_article(link: str) -> str:
+    """Fetch the source article and return its cleaned full-text body, or
+    '' if the link is missing, the fetch fails, or extraction finds
+    nothing usable. Never raises."""
+    if not link:
+        return ""
+    try:
+        html = fetch_url_text(link)
+        if not html:
+            return ""
+        text = clean_text(extract_article_text(html))
+        return text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Full-article extraction failed ({exc}); using feed summary as-is", file=sys.stderr)
+        return ""
 
 
 # send_to_telegram / send_to_telegram_photo return one of three outcomes
