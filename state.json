@@ -408,7 +408,6 @@
     "aa29c2d636573768445521fcde4380bf738557afc6fc384dd1c825d4dcb5aaec"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
-    "2fd9eaa5bb28cb64f9c3e529ca93a19cd9f9b133bfa10257de3e6eabb65d5956",
     "a22ec461e1ac4c488bf118d02b6cc0336781e7f7bd428814882f4d87b1e3daac",
     "d283cbfc648129e440913f6daae3b1065646c80c9958340af4c6e6eb6d594d44",
     "0da6e77b2103c3c1afbc5eb679e785d7c82bb37a05cb29526fc80d945b48ca14",
@@ -625,6 +624,7 @@
     "83697a5da67e2caa447d36b796020d0af395b5b2508f61933d6778d517b09469",
     "43a7684715d677e6f67dc2b5b5385b8af58db232a0c7e9ddaff87019589ec4a1",
     "ff9e7ce79ff8a0412940d3b724c1217ea0fe5582fcd26d283385c4d3634f4f87",
+    "08777cb3dca46197579d4bfcbad9bd86074d8326459ed9bde129f47ebc1b3bfa",
     "62b1bfa1443308a9eb8f0daa7e70230315a3af48df7a31180816ad2501149515",
     "c718f4e24ce4e0decb606f7dc2a87a2dbc518cc041eb939281403f8e51fe403f",
     "99bd1126436f945af251454cf312068476a8f50fd69488cad3d487ae3a1d0977",
@@ -711,8 +711,8 @@
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::titles": [
     "almost2in3feeldissatisfiedorupsetwithtrumpballroomreflectingpoolarchprojectssurvey",
-    "الروبيةالهنديةتستأنفالتراجعمعارتفاعأسعارالنفطأكثر",
     "straitofhormuztrumpthreatenstotargetiransbridgesandpowerplantsifattacksonshippersist",
+    "الروبيةالهنديةتستأنفالتراجعمعارتفاعأسعارالنفطأكثر",
     "withbombingcampaignunlikelytochangeiranspostureaccordingtousinteltrumpfaceslimitedoptions",
     "donaldtrumpisshiftingamericasmilitaryfootprint",
     "الجنيهالمصرييتخلىعنمكاسبجلستينمععودةالدولارفوق51جنيهًابنهايةتعاملاتالأسبوع",
@@ -824,6 +824,7 @@
     "سعرالنفطخامبرنتيصللهدفناالسعريتوقعاتاليوم",
     "fynxtenhancesitspammsoftwarerealtimeallocationzerorolloverforforexandcfdbrokers",
     "بنكاليابانالتشديدالتدريجيوالصدماتالخارجية",
+    "trumpvowstoinvestigateeuoverfiningofustechcompanies",
     "trumpsairwariniranmaybereachingitslimits",
     "indiansharesextendrecentlossesontariffiranlinkedinflationworries",
     "الدولارالأسترالييرتفعفوق07000علىخلفيةموقفبنكالاحتياطيالأستراليالمتشدد",
