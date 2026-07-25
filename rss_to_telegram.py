@@ -359,17 +359,25 @@ def fetch_original_content(link: str) -> str:
         # Try to extract the main content using heuristics
         html = resp.text
         
-        # Try to find content in common article containers
+        # Try to find content in common article containers - expanded list
         patterns = [
             r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*class="[^"]*body[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*class="[^"]*story[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*class="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*article[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*id="[^"]*body[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*id="[^"]*story[^"]*"[^>]*>(.*?)</div>',
             r'<div[^>]*id="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
+            r'<main[^>]*>(.*?)</main>',
+            r'<section[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</section>',
+            r'<div[^>]*class="[^"]*post-content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*single-content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*article-content[^"]*"[^>]*>(.*?)</div>',
         ]
         
         content = ""
@@ -380,16 +388,30 @@ def fetch_original_content(link: str) -> str:
                 break
         
         if not content:
-            # Fallback: try to get all paragraphs
             p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
             if p_matches:
-                content = " ".join(p_matches)
+                filtered = []
+                for p in p_matches:
+                    clean_p = re.sub(r'<[^>]+>', ' ', p).strip()
+                    if len(clean_p) > 30 and not clean_p.startswith('Home') and not clean_p.startswith('News'):
+                        filtered.append(clean_p)
+                content = " ".join(filtered)
         
         if content:
-            # Clean the extracted content
-            content = re.sub(r'<[^>]+>', ' ', content)  # Remove HTML tags
-            content = unescape(content)  # Decode HTML entities
-            content = re.sub(r'\s+', ' ', content).strip()  # Normalize whitespace
+            content = re.sub(r'<[^>]+>', ' ', content)
+            content = unescape(content)
+            content = re.sub(r'\b(Home|News|World|Profiles|Opinion|Sports|Business|Tech|Science|Health)\b', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'SKIP TO CONTENT|Skip to content', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\s+', ' ', content).strip()
+            
+            if len(content) < 100:
+                p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
+                if p_matches:
+                    longest = max(p_matches, key=lambda p: len(p))
+                    content = re.sub(r'<[^>]+>', ' ', longest)
+                    content = unescape(content)
+                    content = re.sub(r'\s+', ' ', content).strip()
+            
             return content
         
         return ""
@@ -407,32 +429,25 @@ def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
     if not text:
         return ""
     
-    # Look for sentence-ending punctuation that is followed by a space, newline, or end of string
-    # This avoids matching periods inside numbers or abbreviations
     match = re.search(r'[.!?۔؟](?=\s+|$)', text)
     
     if match:
         end_pos = match.end()
         result = text[:end_pos].strip()
-        # Clean up any trailing spaces
         result = re.sub(r'\s+$', '', result)
         return result
     
-    # If we can't find a proper sentence boundary, look for any period
-    # But only if it's followed by a space (to avoid abbreviations)
     match = re.search(r'\.\s+', text)
     if match:
         end_pos = match.end()
         result = text[:end_pos].strip()
         return result
     
-    # If still no match, try Arabic punctuation
     match = re.search(r'[؟۔]\s*', text)
     if match:
         end_pos = match.end()
         return text[:end_pos].strip()
     
-    # Fallback to character-based truncation
     if len(text) > max_length:
         return text[:max_length - 1].rsplit(" ", 1)[0] + "…"
     
@@ -440,25 +455,16 @@ def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
 
 
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_full).
-
-    title_ar / summary_ar_full are the complete translated title and
-    description (no Telegram-length trimming) so the website's news feed
-    can always show the full text, even though the Telegram message itself
-    still respects Telegram's caption/message length caps.
-    """
+    """Returns (message_text, image_url, title_ar, summary_ar_full)."""
     title = clean_text(entry.get("title", "(no title)"))
     
-    # Try to get the full content from the original source first
     link = entry.get("link", "")
     original_content = fetch_original_content(link)
     
     if original_content:
-        # Use the original source content
         summary = original_content
         print(f"  ~ Fetched full content from original source")
     else:
-        # Fallback to RSS feed summary
         summary = clean_text(entry.get("summary", ""))
         print(f"  ~ Using RSS summary (original source fetch failed)")
 
@@ -467,8 +473,6 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
-    # Truncate at the first full stop for Telegram
-    # This ensures the description ALWAYS ends at the first sentence
     summary_ar_telegram = truncate_at_first_sentence(summary_ar_full, 900 if image_url else 3500)
 
     emoji = pick_emoji(title_ar, summary_ar_full)
@@ -488,36 +492,19 @@ def fetch_feed(name: str, url: str):
         resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
         resp.raise_for_status()
         return feedparser.parse(resp.content)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  ! Direct fetch failed ({exc}); retrying via proxy...")
 
     try:
         from urllib.parse import quote
-
         proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
         resp = requests.get(proxy_url, timeout=REQUEST_TIMEOUT_SECONDS)
         resp.raise_for_status()
         return feedparser.parse(resp.content)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  ! Proxy fetch also failed: {exc}", file=sys.stderr)
         return None
 
-
-# send_to_telegram / send_to_telegram_photo return one of three outcomes
-# instead of a plain bool. This matters because a network *timeout* is not
-# the same thing as Telegram *rejecting* the message: on a timeout we genuinely
-# don't know whether Telegram received and posted it before our connection
-# dropped. Treating "ambiguous" the same as "failed" is exactly what caused
-# duplicate posts before this fix -- a timed-out sendPhoto would trigger a
-# text fallback even when the photo had actually gone through, so the same
-# story appeared twice (once as a photo, once as text).
-#   "sent"      -> Telegram confirmed with HTTP 200, definitely posted once
-#   "failed"    -> Telegram gave a clear error (bad photo, bad markdown,
-#                   etc.) -- definitely NOT posted, safe to fall back / retry
-#   "ambiguous" -> connection dropped or timed out mid-request -- unknown
-#                   whether it posted. We treat this as "sent" to bias
-#                   toward never double-posting, at the small cost of
-#                   occasionally missing an item on a bad network blip.
 
 def send_to_telegram(text: str) -> str:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -532,7 +519,7 @@ def send_to_telegram(text: str) -> str:
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
         print(f"  ! sendMessage timed out / connection dropped: {exc}", file=sys.stderr)
         return "ambiguous"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  ! sendMessage request failed: {exc}", file=sys.stderr)
         return "failed"
     if resp.status_code != 200:
@@ -542,7 +529,6 @@ def send_to_telegram(text: str) -> str:
 
 
 def send_to_telegram_photo(image_url: str, caption: str) -> str:
-    """Send a photo with a caption. See outcome docstring above."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     payload = {
         "chat_id": CHAT_ID,
@@ -551,14 +537,11 @@ def send_to_telegram_photo(image_url: str, caption: str) -> str:
         "parse_mode": "MarkdownV2",
     }
     try:
-        # Telegram has to fetch the remote image itself before it can
-        # respond, which can take a while -- give this more headroom than
-        # a plain text send so we don't time out on slow source images.
         resp = requests.post(url, json=payload, timeout=45)
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
         print(f"  ! sendPhoto timed out / connection dropped: {exc}", file=sys.stderr)
         return "ambiguous"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  ! sendPhoto request failed: {exc}", file=sys.stderr)
         return "failed"
     if resp.status_code != 200:
@@ -568,9 +551,6 @@ def send_to_telegram_photo(image_url: str, caption: str) -> str:
 
 
 def send_post(text: str, image_url: str) -> bool:
-    """Send a post, with an image if one was found. Falls back to a
-    text-only message only on a CLEAN photo failure -- never after an
-    ambiguous timeout, since that's what used to cause double-posts."""
     if image_url:
         status = send_to_telegram_photo(image_url, text)
         if status == "sent":
@@ -618,15 +598,13 @@ def run_one_pass(state: dict) -> int:
         seen_ids = set(state.get(url, []))
         seen_titles = set(state.get(url + "::titles", []))
         is_new_feed = url not in state
-        newly_seen_ids = []     # items to mark seen: skipped-by-filter, baseline, AND successful sends
-        newly_seen_titles = []  # normalized titles of anything actually sent, for the dedup backstop
+        newly_seen_ids = []
+        newly_seen_titles = []
         sent_this_feed = 0
 
         if is_new_feed and not BASELINE_ONLY:
             print("  ~ First time seeing this feed: priming silently, no messages will be sent for its current backlog.")
 
-        # feed entries are usually newest-first; reverse so oldest is first,
-        # newest is last -- lets us easily grab "the latest new one."
         entries = list(reversed(parsed.entries))
 
         if BASELINE_ONLY or is_new_feed:
@@ -636,11 +614,7 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.append(eid)
                     newly_seen_titles.append(normalize_title(clean_text(entry.get("title", ""))))
         else:
-            # Collect every entry that's genuinely new (and passes the topic
-            # filter, if any) -- but only ever SEND the most recent one.
-            # Everything older than that gets marked seen and discarded
-            # silently, so a burst of new items never floods the channel.
-            candidates = []  # (eid, entry)
+            candidates = []
             for entry in entries:
                 eid = entry_id(entry)
                 if eid in seen_ids:
@@ -650,13 +624,9 @@ def run_one_pass(state: dict) -> int:
                     raw_title = clean_text(entry.get("title", ""))
                     raw_summary = clean_text(entry.get("summary", ""))
                     if not matches_topic(raw_title, raw_summary):
-                        newly_seen_ids.append(eid)  # mark seen, skip silently
+                        newly_seen_ids.append(eid)
                         continue
 
-                # Backstop dedup: same normalized title already sent
-                # recently (e.g. the same article re-fetched with a
-                # rotated id/link around a job restart) -- mark seen,
-                # don't send it again.
                 norm = normalize_title(clean_text(entry.get("title", "")))
                 if norm and norm in seen_titles:
                     newly_seen_ids.append(eid)
@@ -670,31 +640,32 @@ def run_one_pass(state: dict) -> int:
                     print(f"  ~ {len(candidates) - 1} older new item(s) discarded (only sending the latest):")
                     for t in skipped_titles:
                         print(f"      - {t}")
-                    # mark all but the last as seen so they're never sent later
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
                 message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
 
+                # ALWAYS add to latest_news.json, even if Telegram send fails
+                # The website should always show the latest news regardless of Telegram status
+                append_news_item({
+                    "id": latest_eid,
+                    "title": title_ar,
+                    "description": summary_ar_full,
+                    "link": latest_entry.get("link", ""),
+                    "image": image_url,
+                    "source": name,
+                    "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                })
+                
                 if ok:
                     newly_seen_ids.append(latest_eid)
                     newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
-
-                    append_news_item({
-                        "id": latest_eid,
-                        "title": title_ar,
-                        "description": summary_ar_full,
-                        "link": latest_entry.get("link", ""),
-                        "image": image_url,
-                        "source": name,
-                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    })
                 else:
-                    print("  ~ send failed, will retry this one next pass")
+                    print("  ~ send failed, but news was added to latest_news.json for the website")
 
                 time.sleep(SEND_DELAY_SECONDS)
 
@@ -703,7 +674,6 @@ def run_one_pass(state: dict) -> int:
 
         if newly_seen_ids:
             updated = list(seen_ids.union(newly_seen_ids))
-            # keep only the most recent MAX_SEEN_PER_FEED ids
             state[url] = updated[-MAX_SEEN_PER_FEED:]
 
         if newly_seen_titles:
@@ -714,16 +684,7 @@ def run_one_pass(state: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# One-off backfill: populate latest_news.json from each feed's *current*
-# content, without sending anything to Telegram and without touching
-# state.json. Triggered by BACKFILL_NEWS_ONLY=true (see backfill-news.yml).
-#
-# This exists because state.json only stores irreversible hashes (not the
-# original title/text/link), and doesn't distinguish "actually sent" from
-# "seen but silently skipped" -- so a true historical replay of past sends
-# isn't recoverable. This gives the website's ticker real content right
-# away instead of waiting for new genuinely-new items to trickle in over
-# several 5-minute passes.
+# One-off backfill
 # ---------------------------------------------------------------------------
 
 
@@ -732,7 +693,7 @@ def run_backfill_news() -> None:
           "current live content. Nothing will be sent to Telegram, and "
           "state.json will not be touched.\n")
 
-    candidates = []  # (timestamp_epoch, feed_name, entry)
+    candidates = []
     for feed in FEEDS:
         name, url = feed["name"], feed["url"]
         print(f"Fetching: {name} ({url})")
@@ -753,8 +714,6 @@ def run_backfill_news() -> None:
         save_news([])
         return
 
-    # Newest first. Entries without a parsable date sort last rather than
-    # crashing or being skipped.
     candidates.sort(key=lambda c: c[0], reverse=True)
     top = candidates[:MAX_NEWS_ITEMS]
 
@@ -807,17 +766,10 @@ def main() -> None:
         elapsed = time.time() - start
         print(f"\n=== Pass {pass_num} (elapsed {elapsed/60:.1f} min) ===")
 
-        state = load_state()  # reload each pass in case of external changes
+        state = load_state()
         try:
             sent = run_one_pass(state)
-        except Exception as exc:  # noqa: BLE001
-            # `state` is mutated in place inside run_one_pass, so even if it
-            # blew up partway through (e.g. an unexpected error on feed 2 of
-            # N), whatever it already marked as sent for earlier feeds is
-            # still in this dict. Saving it here -- instead of losing it --
-            # is what prevents "job crashed mid-pass" from causing the next
-            # job to re-send items that already went out. The pass itself
-            # still counts as a failure; we just don't throw away its work.
+        except Exception as exc:
             print(f"! Unexpected error during pass, saving partial progress: {exc}", file=sys.stderr)
             sent = 0
         save_state(state)
