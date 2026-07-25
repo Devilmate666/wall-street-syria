@@ -35,6 +35,7 @@ from pathlib import Path
 
 import feedparser
 import requests
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,15 @@ REQUEST_TIMEOUT_SECONDS = 20
 # direct fetch gets blocked (403/429/etc), retry once through a public
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
+
+# The RSS feed's own summary is often just a short teaser, sometimes
+# literally cut off mid-sentence with "...". When that happens we fetch the
+# real article page and pull the actual paragraph text instead -- capped at
+# a reasonable length so this is a complete paragraph or two, never a full
+# page dump, and short enough to always fit comfortably in a Telegram post.
+ARTICLE_FETCH_TIMEOUT_SECONDS = 15
+TEASER_LENGTH_THRESHOLD = 400     # summaries shorter than this are treated as teasers
+FULL_TEXT_MAX_CHARS = 800         # comfortably under Telegram's 900-char photo-caption limit
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -259,6 +269,83 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def looks_like_teaser(text: str) -> bool:
+    """Heuristic for 'this is just a short excerpt, not the full paragraph'.
+    Feed summaries that are cut short are usually either obviously
+    truncated (ending in an ellipsis) or just short in general."""
+    if not text:
+        return True
+    stripped = text.strip()
+    if stripped.endswith(("...", "…")):
+        return True
+    return len(stripped) < TEASER_LENGTH_THRESHOLD
+
+
+def _extract_article_container(soup: "BeautifulSoup"):
+    """Find the element most likely to be the actual article body.
+    Prefers a real <article> tag; otherwise picks whichever container has
+    the most direct-child paragraph text, which in practice reliably beats
+    sidebars/related-links/nav clutter without needing extra dependencies."""
+    article_tag = soup.find("article")
+    if article_tag is not None:
+        return article_tag
+
+    best_container, best_len = None, 0
+    for candidate in soup.find_all(["div", "section", "main"]):
+        paragraphs = candidate.find_all("p", recursive=False)
+        text_len = sum(len(p.get_text(strip=True)) for p in paragraphs)
+        if text_len > best_len:
+            best_len, best_container = text_len, candidate
+    return best_container or soup
+
+
+def fetch_full_article_text(url: str) -> str:
+    """Best-effort fetch of the real article paragraph text from its source
+    page, capped at FULL_TEXT_MAX_CHARS. Returns '' if the fetch/parse fails
+    or nothing better than a teaser could be extracted -- callers should
+    keep the feed's own summary in that case."""
+    if not url:
+        return ""
+
+    resp = None
+    try:
+        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Article fetch failed ({exc}); retrying via proxy...")
+        try:
+            from urllib.parse import quote
+
+            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
+            resp = requests.get(proxy_url, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+        except Exception as exc2:  # noqa: BLE001
+            print(f"  ~ Article proxy fetch also failed, keeping feed teaser: {exc2}")
+            return ""
+
+    try:
+        soup = BeautifulSoup(resp.content, "html.parser")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Article HTML parse failed, keeping feed teaser: {exc}")
+        return ""
+
+    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript"]):
+        tag.decompose()
+
+    container = _extract_article_container(soup)
+    paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
+    full_text = clean_text(" ".join(p for p in paragraphs if p))
+
+    if len(full_text) < TEASER_LENGTH_THRESHOLD:
+        # Couldn't find anything better than what the feed already gave us.
+        return ""
+
+    if len(full_text) > FULL_TEXT_MAX_CHARS:
+        full_text = full_text[:FULL_TEXT_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
+    return full_text
+
+
 def is_mostly_arabic(text: str) -> bool:
     if not text:
         return True
@@ -382,6 +469,18 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
+    link = entry.get("link", "")
+
+    # The feed's own summary is often just a short teaser (sometimes
+    # literally ending in "..."). When that's the case, try pulling the
+    # real article paragraph(s) from the source page instead -- capped at a
+    # sane length, and silently falls back to the feed's teaser if the
+    # fetch/parse doesn't pan out. Whatever we end up with here is used for
+    # BOTH the Telegram post and the website, so the two always match.
+    if looks_like_teaser(summary):
+        full_text = fetch_full_article_text(link)
+        if full_text:
+            summary = full_text
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
