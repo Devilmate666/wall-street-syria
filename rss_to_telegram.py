@@ -35,7 +35,6 @@ from pathlib import Path
 
 import feedparser
 import requests
-import trafilatura
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ STATE_FILE = Path(__file__).parent / "state.json"
 # live headlines -- no third-party RSS-to-JSON converter, no CORS proxy,
 # just the bot's own real output.
 NEWS_FILE = Path(__file__).parent / "latest_news.json"
-MAX_NEWS_ITEMS = 8
+MAX_NEWS_ITEMS = 5
 
 MAX_SEEN_PER_FEED = 300          # how many ids to remember per feed (keeps state.json small)
 MAX_ITEMS_PER_FEED_PER_RUN = 50  # safety cap so a feed reset doesn't spam the channel
@@ -135,6 +134,31 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def load_news() -> list:
+    if NEWS_FILE.exists():
+        try:
+            data = json.loads(NEWS_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def save_news(items: list) -> None:
+    NEWS_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def append_news_item(item: dict) -> None:
+    """Prepend a newly-sent item to latest_news.json, drop any earlier entry
+    with the same id (so a re-fetch/restart can never duplicate a story),
+    and keep only the most recent MAX_NEWS_ITEMS."""
+    items = load_news()
+    items = [it for it in items if it.get("id") != item.get("id")]
+    items.insert(0, item)
+    items = items[:MAX_NEWS_ITEMS]
+    save_news(items)
+
+
 def commit_and_push_state() -> None:
     """Commit + push state.json if it changed. Never raises -- just logs.
     If the push is rejected (e.g. a previous job's commit landed a moment
@@ -146,7 +170,7 @@ def commit_and_push_state() -> None:
     and re-send whatever this job just sent."""
     try:
         status = subprocess.run(
-            ["git", "status", "--porcelain", str(STATE_FILE)],
+            ["git", "status", "--porcelain", str(STATE_FILE), str(NEWS_FILE)],
             capture_output=True, text=True, check=True,
         )
         if not status.stdout.strip():
@@ -156,7 +180,8 @@ def commit_and_push_state() -> None:
             ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
             check=True,
         )
-        subprocess.run(["git", "add", str(STATE_FILE)], check=True)
+        paths_to_add = [str(p) for p in (STATE_FILE, NEWS_FILE) if p.exists()]
+        subprocess.run(["git", "add", *paths_to_add], check=True)
         subprocess.run(
             ["git", "commit", "-m", "chore: update seen RSS items [skip ci]"],
             check=True,
@@ -232,37 +257,6 @@ def clean_text(text: str) -> str:
     text = strip_urls(text)                # remove any raw links
     text = strip_video_mentions(text)      # remove "watch the video" callouts
     return " ".join(text.split())
-
-
-def truncate_to_sentence(text: str, limit: int) -> str:
-    """Shorten `text` to fit within `limit` chars, but end on a complete
-    sentence (full stop / ? / ! / Arabic ؟ / etc.) instead of chopping a
-    word in half and slapping an ellipsis on it.
-
-    Walks the sentences (already split on the same punctuation used
-    elsewhere in this script) and keeps adding them while they still fit.
-    If even the first sentence is longer than `limit` (rare, but possible
-    for a feed with no punctuation at all), falls back to the old
-    word-boundary + ellipsis behaviour so we still respect Telegram's
-    caption/message size caps.
-    """
-    sentences = [s.strip() for s in SENTENCE_SPLIT_RE.split(text) if s.strip()]
-
-    kept = []
-    length = 0
-    for sentence in sentences:
-        # +1 for the joining space between sentences
-        added = len(sentence) + (1 if kept else 0)
-        if length + added > limit:
-            break
-        kept.append(sentence)
-        length += added
-
-    if kept:
-        return " ".join(kept)
-
-    # No single complete sentence fits -- fall back to a hard cut.
-    return text[: limit - 1].rsplit(" ", 1)[0] + "…"
 
 
 def is_mostly_arabic(text: str) -> bool:
@@ -341,142 +335,38 @@ def extract_image_url(entry) -> str:
     return ""
 
 
-TRUNCATION_ENDINGS = ("...", "…")
+def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
+    """Returns (message_text, image_url, title_ar, summary_ar_full).
 
-
-def looks_truncated(text: str) -> bool:
-    """True if a (cleaned) summary appears to have been cut off mid-thought
-    by the RSS feed itself, e.g. ending in '...' or '…'."""
-    if not text:
-        return False
-    return text.rstrip().endswith(TRUNCATION_ENDINGS)
-
-
-def complete_truncated_summary(feed_summary: str, article_text: str) -> str:
-    """If `feed_summary` was cut off by the RSS feed (ends in '...'/'…'),
-    use the full source article to finish just that last, cut-off sentence
-    -- not to replace the whole summary with the whole article.
-
-    Works by finding where the tail end of the truncated snippet lines up
-    verbatim in the article (RSS feeds that truncate usually do so by
-    literally chopping the article's own first paragraph), then picking up
-    right there and reading only as far as the next sentence-ending mark.
-    If no reliable match is found (e.g. the feed wrote its own short teaser
-    instead of truncating the real text), the original summary is returned
-    unchanged rather than guessing.
+    title_ar / summary_ar_full are the complete translated title and
+    description (no Telegram-length trimming) so the website's news feed
+    can always show the full text, even though the Telegram message itself
+    still respects Telegram's caption/message length caps.
     """
-    incomplete = feed_summary.rstrip()
-    for suffix in TRUNCATION_ENDINGS:
-        if incomplete.endswith(suffix):
-            incomplete = incomplete[: -len(suffix)].rstrip()
-            break
-
-    if not incomplete or not article_text:
-        return feed_summary
-
-    # Anchor on the tail end of the cut-off snippet so we can locate the
-    # exact spot in the article where the feed's text stopped.
-    anchor_len = min(60, len(incomplete))
-    anchor = incomplete[-anchor_len:]
-    pos = article_text.find(anchor)
-
-    if pos == -1:
-        return feed_summary  # no confident match -- don't guess
-
-    resume_at = pos + len(anchor)
-    rest = article_text[resume_at:].strip()
-    if not rest:
-        return feed_summary
-
-    # Only take enough of the article to finish the sentence that was cut
-    # off -- the rest of the article is not included.
-    completion = SENTENCE_SPLIT_RE.split(rest, maxsplit=1)[0].strip()
-    if not completion:
-        return feed_summary
-
-    return f"{incomplete} {completion}".strip()
-
-
-def build_message(feed_name: str, entry) -> tuple[str, str]:
-    """Returns (message_text, image_url). image_url is '' if none found."""
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
 
-    if looks_truncated(summary):
-        article_text = clean_text(fetch_article_text(entry.get("link", "")))
-        if article_text:
-            completed = complete_truncated_summary(summary, article_text)
-            if completed != summary:
-                summary = completed
-                print("  ~ completed a cut-off summary using the source article")
-            else:
-                print("  ~ cut-off summary didn't match the article text, leaving as-is")
-        else:
-            print("  ~ summary looked cut off but article fetch failed, leaving as-is")
-
     image_url = extract_image_url(entry)
+
+    title_ar = to_arabic(title)
+    summary_ar_full = to_arabic(summary) if summary else ""
+
     # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
     # Leave headroom for the emoji/title/markdown-escaping overhead, but
     # otherwise let the full source summary through instead of cutting it
-    # short artificially.
+    # short artificially. This trimming only affects the Telegram message --
+    # the full text above is kept as-is for the website.
     summary_limit = 900 if image_url else 3500
-    if len(summary) > summary_limit:
-        summary = truncate_to_sentence(summary, summary_limit)
+    summary_ar_telegram = summary_ar_full
+    if len(summary_ar_telegram) > summary_limit:
+        summary_ar_telegram = summary_ar_telegram[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
 
-    title_ar = to_arabic(title)
-    summary_ar = to_arabic(summary) if summary else ""
-
-    emoji = pick_emoji(title_ar, summary_ar)
+    emoji = pick_emoji(title_ar, summary_ar_full)
 
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
-    if summary_ar and summary_ar != title_ar:
-        parts.append(escape_markdown_v2(summary_ar))
-    return "\n\n".join(parts), image_url
-
-
-def fetch_article_text(link: str) -> str:
-    """Fetch the actual article page (not the RSS feed) and extract its
-    full body text with trafilatura. This is what lets us post the real,
-    complete story instead of whatever (possibly truncated) snippet the
-    RSS feed's <summary> happened to include.
-
-    Same direct-then-proxy fetch pattern as fetch_feed(), since the sites
-    that block datacenter IPs for the feed itself will just as often block
-    the article page too. Returns '' on any failure -- callers fall back
-    to the feed's own summary in that case.
-    """
-    if not link:
-        return ""
-
-    html = None
-    try:
-        resp = requests.get(link, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-        html = resp.text
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ~ direct article fetch failed ({exc}); retrying via proxy...")
-        try:
-            from urllib.parse import quote
-
-            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(link, safe=""))
-            resp = requests.get(proxy_url, timeout=REQUEST_TIMEOUT_SECONDS)
-            resp.raise_for_status()
-            html = resp.text
-        except Exception as exc2:  # noqa: BLE001
-            print(f"  ! proxy article fetch also failed: {exc2}", file=sys.stderr)
-            return ""
-
-    try:
-        extracted = trafilatura.extract(
-            html,
-            include_comments=False,
-            include_tables=False,
-            favor_precision=True,
-        )
-        return extracted or ""
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ! article text extraction failed: {exc}", file=sys.stderr)
-        return ""
+    if summary_ar_telegram and summary_ar_telegram != title_ar:
+        parts.append(escape_markdown_v2(summary_ar_telegram))
+    return "\n\n".join(parts), image_url, title_ar, summary_ar_full
 
 
 def fetch_feed(name: str, url: str):
@@ -674,7 +564,7 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message, image_url = build_message(name, latest_entry)
+                message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
 
                 if ok:
@@ -683,6 +573,16 @@ def run_one_pass(state: dict) -> int:
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
+
+                    append_news_item({
+                        "id": latest_eid,
+                        "title": title_ar,
+                        "description": summary_ar_full,
+                        "link": latest_entry.get("link", ""),
+                        "image": image_url,
+                        "source": name,
+                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    })
                 else:
                     print("  ~ send failed, will retry this one next pass")
 
