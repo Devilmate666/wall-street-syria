@@ -35,7 +35,6 @@ from pathlib import Path
 
 import feedparser
 import requests
-from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -108,14 +107,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 # direct fetch gets blocked (403/429/etc), retry once through a public
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
-
-# Many RSS feeds (this one included) only give a short teaser summary,
-# sometimes literally ending in "...". Rather than show that stub, we try
-# fetching the actual article page and pulling out the real body text.
-# These control when that kicks in and how much we keep.
-ARTICLE_FETCH_TIMEOUT_SECONDS = 15
-TEASER_LENGTH_THRESHOLD = 400     # summaries shorter than this are treated as teasers
-FULL_TEXT_MAX_CHARS = 4000        # sanity cap so a mis-parsed page can't produce a huge blob
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -268,82 +259,6 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def looks_like_teaser(text: str) -> bool:
-    """Heuristic for 'this is just a short excerpt, not the full article'.
-    Feed summaries that are cut short are usually either obviously
-    truncated (ending in an ellipsis) or just short in general."""
-    if not text:
-        return True
-    stripped = text.strip()
-    if stripped.endswith(("...", "…")):
-        return True
-    return len(stripped) < TEASER_LENGTH_THRESHOLD
-
-
-def _extract_article_container(soup: BeautifulSoup):
-    """Find the element most likely to be the actual article body.
-    Prefers a real <article> tag; otherwise picks whichever container has
-    the most direct-child paragraph text, which in practice reliably beats
-    sidebars/related-links/nav clutter without needing extra dependencies."""
-    article_tag = soup.find("article")
-    if article_tag is not None:
-        return article_tag
-
-    best_container, best_len = None, 0
-    for candidate in soup.find_all(["div", "section", "main"]):
-        paragraphs = candidate.find_all("p", recursive=False)
-        text_len = sum(len(p.get_text(strip=True)) for p in paragraphs)
-        if text_len > best_len:
-            best_len, best_container = text_len, candidate
-    return best_container or soup
-
-
-def fetch_full_article_text(url: str) -> str:
-    """Best-effort fetch of the full article body from its source page.
-    Returns '' if the fetch/parse fails or nothing better than a teaser
-    could be extracted -- callers should keep the feed's own summary then."""
-    if not url:
-        return ""
-
-    resp = None
-    try:
-        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ~ Article fetch failed ({exc}); retrying via proxy...")
-        try:
-            from urllib.parse import quote
-
-            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
-            resp = requests.get(proxy_url, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
-            resp.raise_for_status()
-        except Exception as exc2:  # noqa: BLE001
-            print(f"  ~ Article proxy fetch also failed, keeping feed teaser: {exc2}")
-            return ""
-
-    try:
-        soup = BeautifulSoup(resp.content, "html.parser")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ~ Article HTML parse failed, keeping feed teaser: {exc}")
-        return ""
-
-    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript"]):
-        tag.decompose()
-
-    container = _extract_article_container(soup)
-    paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    full_text = clean_text(" ".join(p for p in paragraphs if p))
-
-    if len(full_text) < TEASER_LENGTH_THRESHOLD:
-        # Couldn't find anything better than what the feed already gave us.
-        return ""
-
-    if len(full_text) > FULL_TEXT_MAX_CHARS:
-        full_text = full_text[:FULL_TEXT_MAX_CHARS].rsplit(" ", 1)[0] + "…"
-
-    return full_text
-
-
 def is_mostly_arabic(text: str) -> bool:
     if not text:
         return True
@@ -421,27 +336,18 @@ def extract_image_url(entry) -> str:
 
 
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_full).
+    """Returns (message_text, image_url, title_ar, summary_ar_telegram).
 
-    title_ar / summary_ar_full are the complete translated title and
-    description (no Telegram-length trimming) so the website's news feed
-    can always show the full text, even though the Telegram message itself
-    still respects Telegram's caption/message length caps.
+    summary_ar_telegram is the exact same (Telegram-length-trimmed) text
+    that gets posted to the channel, so the website's news ticker always
+    shows precisely what viewers see on Telegram -- no separate "fuller"
+    version, no extra fetching, nothing that could look inconsistent
+    between the two.
     """
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
-    link = entry.get("link", "")
-
-    # The feed's own summary is often just a short teaser (sometimes
-    # literally ending in "..."). When that's the case, try pulling the
-    # real article body from the source page instead -- silently falls
-    # back to the feed's teaser if the fetch/parse doesn't pan out.
-    if looks_like_teaser(summary):
-        full_text = fetch_full_article_text(link)
-        if full_text:
-            summary = full_text
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
@@ -449,8 +355,7 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
     # Leave headroom for the emoji/title/markdown-escaping overhead, but
     # otherwise let the full source summary through instead of cutting it
-    # short artificially. This trimming only affects the Telegram message --
-    # the full text above is kept as-is for the website.
+    # short artificially.
     summary_limit = 900 if image_url else 3500
     summary_ar_telegram = summary_ar_full
     if len(summary_ar_telegram) > summary_limit:
@@ -461,7 +366,7 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
     if summary_ar_telegram and summary_ar_telegram != title_ar:
         parts.append(escape_markdown_v2(summary_ar_telegram))
-    return "\n\n".join(parts), image_url, title_ar, summary_ar_full
+    return "\n\n".join(parts), image_url, title_ar, summary_ar_telegram
 
 
 def fetch_feed(name: str, url: str):
@@ -659,7 +564,7 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
+                message, image_url, title_ar, summary_ar_telegram = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
 
                 if ok:
@@ -672,7 +577,7 @@ def run_one_pass(state: dict) -> int:
                     append_news_item({
                         "id": latest_eid,
                         "title": title_ar,
-                        "description": summary_ar_full,
+                        "description": summary_ar_telegram,
                         "link": latest_entry.get("link", ""),
                         "image": image_url,
                         "source": name,
@@ -745,11 +650,11 @@ def run_backfill_news() -> None:
 
     items = []
     for _, name, entry in top:
-        _, image_url, title_ar, summary_ar_full = build_message(name, entry)
+        _, image_url, title_ar, summary_ar_telegram = build_message(name, entry)
         items.append({
             "id": entry_id(entry),
             "title": title_ar,
-            "description": summary_ar_full,
+            "description": summary_ar_telegram,
             "link": entry.get("link", ""),
             "image": image_url,
             "source": name,
