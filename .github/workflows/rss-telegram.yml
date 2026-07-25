@@ -42,15 +42,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python rss_to_telegram.py
 
-      - name: Final safety-net commit of state.json
+      - name: Final safety-net commit of state.json / latest_news.json
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain state.json)" ]; then
+          if [ -n "$(git status --porcelain state.json latest_news.json 2>/dev/null)" ]; then
             git add state.json
+            [ -f latest_news.json ] && git add latest_news.json
             git commit -m "chore: final state save [skip ci]"
             git push
           else
-            echo "No changes to state.json"
+            echo "No changes to state.json / latest_news.json"
           fi
