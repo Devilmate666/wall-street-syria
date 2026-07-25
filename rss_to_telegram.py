@@ -35,7 +35,6 @@ from pathlib import Path
 
 import feedparser
 import requests
-from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -108,15 +107,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 # direct fetch gets blocked (403/429/etc), retry once through a public
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
-
-# The RSS feed's own summary is often just a short teaser, sometimes
-# literally cut off mid-sentence with "...". When that happens we fetch the
-# real article page and pull the actual paragraph text instead -- capped at
-# a reasonable length so this is a complete paragraph or two, never a full
-# page dump, and short enough to always fit comfortably in a Telegram post.
-ARTICLE_FETCH_TIMEOUT_SECONDS = 15
-TEASER_LENGTH_THRESHOLD = 400     # summaries shorter than this are treated as teasers
-FULL_TEXT_MAX_CHARS = 800         # comfortably under Telegram's 900-char photo-caption limit
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -231,7 +221,7 @@ BBCODE_TAG_RE = re.compile(r"\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]")
 URL_RE = re.compile(r"https?://\S+")
 
 # Sentence-splitting delimiters (Arabic + Latin punctuation)
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟。])\s+")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟۔])\s+")
 
 # Any sentence containing one of these is a "go watch the video" callout
 # that's meaningless without a link, so we drop the whole sentence.
@@ -269,83 +259,6 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def looks_like_teaser(text: str) -> bool:
-    """Heuristic for 'this is just a short excerpt, not the full paragraph'.
-    Feed summaries that are cut short are usually either obviously
-    truncated (ending in an ellipsis) or just short in general."""
-    if not text:
-        return True
-    stripped = text.strip()
-    if stripped.endswith(("...", "…")):
-        return True
-    return len(stripped) < TEASER_LENGTH_THRESHOLD
-
-
-def _extract_article_container(soup: "BeautifulSoup"):
-    """Find the element most likely to be the actual article body.
-    Prefers a real <article> tag; otherwise picks whichever container has
-    the most direct-child paragraph text, which in practice reliably beats
-    sidebars/related-links/nav clutter without needing extra dependencies."""
-    article_tag = soup.find("article")
-    if article_tag is not None:
-        return article_tag
-
-    best_container, best_len = None, 0
-    for candidate in soup.find_all(["div", "section", "main"]):
-        paragraphs = candidate.find_all("p", recursive=False)
-        text_len = sum(len(p.get_text(strip=True)) for p in paragraphs)
-        if text_len > best_len:
-            best_len, best_container = text_len, candidate
-    return best_container or soup
-
-
-def fetch_full_article_text(url: str) -> str:
-    """Best-effort fetch of the real article paragraph text from its source
-    page, capped at FULL_TEXT_MAX_CHARS. Returns '' if the fetch/parse fails
-    or nothing better than a teaser could be extracted -- callers should
-    keep the feed's own summary in that case."""
-    if not url:
-        return ""
-
-    resp = None
-    try:
-        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ~ Article fetch failed ({exc}); retrying via proxy...")
-        try:
-            from urllib.parse import quote
-
-            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
-            resp = requests.get(proxy_url, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
-            resp.raise_for_status()
-        except Exception as exc2:  # noqa: BLE001
-            print(f"  ~ Article proxy fetch also failed, keeping feed teaser: {exc2}")
-            return ""
-
-    try:
-        soup = BeautifulSoup(resp.content, "html.parser")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ~ Article HTML parse failed, keeping feed teaser: {exc}")
-        return ""
-
-    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript"]):
-        tag.decompose()
-
-    container = _extract_article_container(soup)
-    paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    full_text = clean_text(" ".join(p for p in paragraphs if p))
-
-    if len(full_text) < TEASER_LENGTH_THRESHOLD:
-        # Couldn't find anything better than what the feed already gave us.
-        return ""
-
-    if len(full_text) > FULL_TEXT_MAX_CHARS:
-        full_text = full_text[:FULL_TEXT_MAX_CHARS].rsplit(" ", 1)[0] + "…"
-
-    return full_text
-
-
 def is_mostly_arabic(text: str) -> bool:
     if not text:
         return True
@@ -356,52 +269,18 @@ def is_mostly_arabic(text: str) -> bool:
     return (arabic_chars / letters) > 0.5
 
 
-def _looks_like_translate_failure(original: str, translated: str) -> bool:
-    """Detect the specific failure mode where Google Translate (via the free
-    deep-translator scrape) returns an HTTP error page's body text as if it
-    were a successful translation, instead of raising. Two checks:
-    1) known error-page phrasing, 2) target was Arabic but the result isn't
-    mostly Arabic -- either way it's not a real translation."""
-    if not translated:
-        return True
-    lowered = translated.lower()
-    error_markers = ("error 500", "that's an error", "that’s an error", "server error")
-    if any(marker in lowered for marker in error_markers):
-        return True
-    if translated == original:
-        return False  # untranslated passthrough (e.g. nothing to translate) is fine
-    return not is_mostly_arabic(translated)
-
-
 def to_arabic(text: str) -> str:
     """Translate text to Arabic. If it's already Arabic, or translation
-    fails for any reason (including Google quietly handing back an error
-    page instead of raising), just return the original text untouched.
-    Retries a couple of times first, since the free Google Translate
-    endpoint is often just transiently rate-limited rather than truly down."""
+    fails for any reason, just return the original text untouched."""
     text = text.strip()
     if not text or is_mostly_arabic(text):
         return text
-
-    attempts = 3
-    for attempt in range(1, attempts + 1):
-        try:
-            translated = GoogleTranslator(source="auto", target="ar").translate(text)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ! Translation attempt {attempt}/{attempts} failed: {exc}", file=sys.stderr)
-            translated = None
-
-        if translated and not _looks_like_translate_failure(text, translated):
-            return translated
-
-        if translated:
-            print(f"  ! Translation attempt {attempt}/{attempts} returned a bad result "
-                  f"(likely a Google error page), retrying...", file=sys.stderr)
-        if attempt < attempts:
-            time.sleep(2)
-
-    print("  ! All translation attempts failed, using original text instead.", file=sys.stderr)
-    return text
+    try:
+        translated = GoogleTranslator(source="auto", target="ar").translate(text)
+        return translated or text
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Translation failed, using original text: {exc}", file=sys.stderr)
+        return text
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -457,49 +336,46 @@ def extract_image_url(entry) -> str:
 
 
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_telegram).
+    """Returns (message_text, image_url, title_ar, summary_ar_full).
 
-    summary_ar_telegram is the exact same (Telegram-length-trimmed) text
-    that gets posted to the channel, so the website's news ticker always
-    shows precisely what viewers see on Telegram -- no separate "fuller"
-    version, no extra fetching, nothing that could look inconsistent
-    between the two.
+    title_ar / summary_ar_full are the complete translated title and
+    description (no Telegram-length trimming) so the website's news feed
+    can always show the full text, even though the Telegram message itself
+    still respects Telegram's caption/message length caps.
     """
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
-    link = entry.get("link", "")
-
-    # The feed's own summary is often just a short teaser (sometimes
-    # literally ending in "..."). When that's the case, try pulling the
-    # real article paragraph(s) from the source page instead -- capped at a
-    # sane length, and silently falls back to the feed's teaser if the
-    # fetch/parse doesn't pan out. Whatever we end up with here is used for
-    # BOTH the Telegram post and the website, so the two always match.
-    if looks_like_teaser(summary):
-        full_text = fetch_full_article_text(link)
-        if full_text:
-            summary = full_text
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
-    # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
-    # Leave headroom for the emoji/title/markdown-escaping overhead, but
-    # otherwise let the full source summary through instead of cutting it
-    # short artificially.
-    summary_limit = 900 if image_url else 3500
+    # Truncate at the first full stop (period) for a clean sentence break.
+    # This gives a natural "sentence preview" instead of cutting mid-word.
+    # Use the already-translated Arabic text so we get proper Arabic punctuation.
     summary_ar_telegram = summary_ar_full
-    if len(summary_ar_telegram) > summary_limit:
-        summary_ar_telegram = summary_ar_telegram[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
+    if summary_ar_telegram:
+        # Look for sentence-ending punctuation in Arabic/Latin: . ! ? ۔
+        # The Arabic full stop is "۔" but most Arabic text uses "." or "؟" or "!"
+        match = re.search(r'[.!?۔؟]\s*', summary_ar_telegram)
+        if match:
+            # Cut after the first sentence-ending punctuation + any trailing spaces
+            end_pos = match.end()
+            summary_ar_telegram = summary_ar_telegram[:end_pos].strip()
+        else:
+            # If no sentence-ending punctuation found, fall back to character-based truncation
+            # to avoid sending an extremely long message with no natural break.
+            summary_limit = 900 if image_url else 3500
+            if len(summary_ar_telegram) > summary_limit:
+                summary_ar_telegram = summary_ar_telegram[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
 
     emoji = pick_emoji(title_ar, summary_ar_full)
 
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
     if summary_ar_telegram and summary_ar_telegram != title_ar:
         parts.append(escape_markdown_v2(summary_ar_telegram))
-    return "\n\n".join(parts), image_url, title_ar, summary_ar_telegram
+    return "\n\n".join(parts), image_url, title_ar, summary_ar_full
 
 
 def fetch_feed(name: str, url: str):
@@ -697,7 +573,7 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message, image_url, title_ar, summary_ar_telegram = build_message(name, latest_entry)
+                message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
 
                 if ok:
@@ -710,7 +586,7 @@ def run_one_pass(state: dict) -> int:
                     append_news_item({
                         "id": latest_eid,
                         "title": title_ar,
-                        "description": summary_ar_telegram,
+                        "description": summary_ar_full,
                         "link": latest_entry.get("link", ""),
                         "image": image_url,
                         "source": name,
@@ -783,11 +659,11 @@ def run_backfill_news() -> None:
 
     items = []
     for _, name, entry in top:
-        _, image_url, title_ar, summary_ar_telegram = build_message(name, entry)
+        _, image_url, title_ar, summary_ar_full = build_message(name, entry)
         items.append({
             "id": entry_id(entry),
             "title": title_ar,
-            "description": summary_ar_telegram,
+            "description": summary_ar_full,
             "link": entry.get("link", ""),
             "image": image_url,
             "source": name,
