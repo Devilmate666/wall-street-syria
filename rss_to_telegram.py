@@ -399,6 +399,33 @@ def fetch_original_content(link: str) -> str:
         return ""
 
 
+def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
+    """
+    Truncate text at the first sentence-ending punctuation (. ! ? ۔ ؟)
+    Returns the first sentence only, or truncated text if no punctuation found.
+    """
+    if not text:
+        return ""
+    
+    # Look for sentence-ending punctuation
+    # This matches . ! ? ۔ ؟ followed by whitespace or end of string
+    match = re.search(r'[.!?۔؟]\s*', text)
+    
+    if match:
+        # Cut at the punctuation + any trailing whitespace
+        end_pos = match.end()
+        result = text[:end_pos].strip()
+        # Remove any trailing whitespace or extra characters
+        result = re.sub(r'\s+$', '', result)
+        return result
+    
+    # If no punctuation found, fall back to character-based truncation
+    if len(text) > max_length:
+        return text[:max_length - 1].rsplit(" ", 1)[0] + "…"
+    
+    return text
+
+
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     """Returns (message_text, image_url, title_ar, summary_ar_full).
 
@@ -427,22 +454,9 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
-    # Truncate at the first full stop (period) for a clean sentence break.
-    # This gives a natural "sentence preview" instead of cutting mid-word.
-    summary_ar_telegram = summary_ar_full
-    if summary_ar_telegram:
-        # Look for sentence-ending punctuation in Arabic/Latin: . ! ? ۔
-        match = re.search(r'[.!?۔؟]\s*', summary_ar_telegram)
-        if match:
-            # Cut after the first sentence-ending punctuation + any trailing spaces
-            end_pos = match.end()
-            summary_ar_telegram = summary_ar_telegram[:end_pos].strip()
-        else:
-            # If no sentence-ending punctuation found, fall back to character-based truncation
-            # to avoid sending an extremely long message with no natural break.
-            summary_limit = 900 if image_url else 3500
-            if len(summary_ar_telegram) > summary_limit:
-                summary_ar_telegram = summary_ar_telegram[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
+    # Truncate at the first full stop for Telegram
+    # This ensures the description ALWAYS ends at the first sentence
+    summary_ar_telegram = truncate_at_first_sentence(summary_ar_full, 900 if image_url else 3500)
 
     emoji = pick_emoji(title_ar, summary_ar_full)
 
