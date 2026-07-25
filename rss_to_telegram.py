@@ -339,45 +339,34 @@ def extract_image_url(entry) -> str:
 
 def fetch_original_content(link: str) -> str:
     """Fetch the original article content from the source URL.
-    Returns the cleaned text content or empty string if failed."""
+    Returns ONLY the article text content, filtering out all HTML/CSS/JS."""
     if not link:
         return ""
     
     try:
-        # Use browser-like headers to avoid being blocked
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
         }
         resp = requests.get(link, headers=headers, timeout=15)
         resp.raise_for_status()
         
-        # Try to extract the main content using heuristics
         html = resp.text
         
-        # Try to find content in common article containers - expanded list
+        # Method 1: Try to find article content in specific containers
         patterns = [
-            r'<article[^>]*>(.*?)</article>',
-            r'<div[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*body[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*story[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*article[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*body[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*story[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
-            r'<main[^>]*>(.*?)</main>',
-            r'<section[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</section>',
-            r'<div[^>]*class="[^"]*post-content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*single-content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*article-content[^"]*"[^>]*>(.*?)</div>',
+            # Article body with specific classes
+            r'<div[^>]*class="[^"]*article[_-]body[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*post[_-]content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*entry[_-]content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*single[_-]content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*article[_-]content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*tdb-block-inner[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*postcontent[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*story-content[^"]*"[^>]*>(.*?)</div>',
         ]
         
         content = ""
@@ -388,29 +377,57 @@ def fetch_original_content(link: str) -> str:
                 break
         
         if not content:
+            # Method 2: Extract all paragraph texts directly - cleaner approach
             p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
             if p_matches:
                 filtered = []
                 for p in p_matches:
                     clean_p = re.sub(r'<[^>]+>', ' ', p).strip()
-                    if len(clean_p) > 30 and not clean_p.startswith('Home') and not clean_p.startswith('News'):
+                    # Skip paragraphs that are clearly not article content
+                    if len(clean_p) > 30:
+                        # Skip if it's just a date, author, or metadata
+                        if re.match(r'^(July|August|September|October|November|December|January|February|March|April|May|June)\s+\d+', clean_p):
+                            continue
+                        if re.match(r'^By\s+', clean_p):
+                            continue
+                        if re.match(r'^Share\s+', clean_p):
+                            continue
+                        if re.match(r'^Follow\s+Us', clean_p):
+                            continue
+                        # Skip if it contains mostly code/JS
+                        if clean_p.count('{') > 5 or clean_p.count('}') > 5:
+                            continue
+                        # Skip if it's just a single word or very short
+                        if len(clean_p.split()) < 3:
+                            continue
                         filtered.append(clean_p)
-                content = " ".join(filtered)
+                if filtered:
+                    content = " ".join(filtered)
         
         if content:
+            # Clean the extracted content
             content = re.sub(r'<[^>]+>', ' ', content)
             content = unescape(content)
-            content = re.sub(r'\b(Home|News|World|Profiles|Opinion|Sports|Business|Tech|Science|Health)\b', '', content, flags=re.IGNORECASE)
-            content = re.sub(r'SKIP TO CONTENT|Skip to content', '', content, flags=re.IGNORECASE)
-            content = re.sub(r'\s+', ' ', content).strip()
             
-            if len(content) < 100:
-                p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
-                if p_matches:
-                    longest = max(p_matches, key=lambda p: len(p))
-                    content = re.sub(r'<[^>]+>', ' ', longest)
-                    content = unescape(content)
-                    content = re.sub(r'\s+', ' ', content).strip()
+            # Remove CSS/JS artifacts
+            content = re.sub(r'\.tdi_\d+', '', content)
+            content = re.sub(r'\{[^}]*\}', '', content)
+            content = re.sub(r'#[a-zA-Z0-9_-]+', '', content)
+            
+            # Remove common navigation/menu text
+            nav_words = r'\b(Home|News|World|Profiles|Opinion|Sports|Business|Tech|Science|Health|Politics|Entertainment|Lifestyle|Features|Videos|Photos)\b'
+            content = re.sub(nav_words, '', content, flags=re.IGNORECASE)
+            
+            # Remove "Skip to content" and similar
+            content = re.sub(r'SKIP TO CONTENT|Skip to content', '', content, flags=re.IGNORECASE)
+            
+            # Remove any remaining CSS-like text
+            content = re.sub(r'[{};:]\s*[a-zA-Z-]+:', '', content)
+            content = re.sub(r'https?://\S+', '', content)
+            content = re.sub(r'\(\s*\)', '', content)
+            
+            # Remove excessive whitespace
+            content = re.sub(r'\s+', ' ', content).strip()
             
             return content
         
@@ -679,6 +696,7 @@ def run_one_pass(state: dict) -> int:
                 ok = send_post(message, image_url)
 
                 # ALWAYS add to latest_news.json, even if Telegram send fails
+                # This ensures the website always shows the latest news
                 append_news_item({
                     "id": latest_eid,
                     "title": title_ar,
