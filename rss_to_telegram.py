@@ -402,24 +402,37 @@ def fetch_original_content(link: str) -> str:
 def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
     """
     Truncate text at the first sentence-ending punctuation (. ! ? ۔ ؟)
-    Returns the first sentence only, or truncated text if no punctuation found.
+    Returns the first sentence only.
     """
     if not text:
         return ""
     
-    # Look for sentence-ending punctuation
-    # This matches . ! ? ۔ ؟ followed by whitespace or end of string
-    match = re.search(r'[.!?۔؟]\s*', text)
+    # Look for sentence-ending punctuation that is followed by a space, newline, or end of string
+    # This avoids matching periods inside numbers or abbreviations
+    match = re.search(r'[.!?۔؟](?=\s+|$)', text)
     
     if match:
-        # Cut at the punctuation + any trailing whitespace
         end_pos = match.end()
         result = text[:end_pos].strip()
-        # Remove any trailing whitespace or extra characters
+        # Clean up any trailing spaces
         result = re.sub(r'\s+$', '', result)
         return result
     
-    # If no punctuation found, fall back to character-based truncation
+    # If we can't find a proper sentence boundary, look for any period
+    # But only if it's followed by a space (to avoid abbreviations)
+    match = re.search(r'\.\s+', text)
+    if match:
+        end_pos = match.end()
+        result = text[:end_pos].strip()
+        return result
+    
+    # If still no match, try Arabic punctuation
+    match = re.search(r'[؟۔]\s*', text)
+    if match:
+        end_pos = match.end()
+        return text[:end_pos].strip()
+    
+    # Fallback to character-based truncation
     if len(text) > max_length:
         return text[:max_length - 1].rsplit(" ", 1)[0] + "…"
     
