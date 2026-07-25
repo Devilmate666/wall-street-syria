@@ -455,24 +455,56 @@ def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
 
 
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_full)."""
+    """Returns (message_text, image_url, title_ar, summary_ar_full).
+
+    Strategy:
+    1. Check RSS summary first
+    2. If it has a proper ending (full stop at the end) -> use it
+    3. If it ends with ... or has no full stop -> fetch from original source
+    4. Fallback to RSS summary if fetch fails
+    """
     title = clean_text(entry.get("title", "(no title)"))
     
-    link = entry.get("link", "")
-    original_content = fetch_original_content(link)
+    # Get the RSS summary first
+    rss_summary = clean_text(entry.get("summary", ""))
     
-    if original_content:
-        summary = original_content
-        print(f"  ~ Fetched full content from original source")
+    # Check if RSS summary has a proper ending (full stop at the end)
+    has_full_stop = re.search(r'[.!?۔؟]\s*$', rss_summary)
+    
+    # Check if RSS summary ends with ellipsis (truncated)
+    ends_with_ellipsis = re.search(r'…\s*$', rss_summary)
+    
+    # Check if RSS summary has a period anywhere
+    has_period_anywhere = re.search(r'[.!?۔؟]', rss_summary)
+    
+    # Decision logic
+    if has_full_stop:
+        # RSS summary has a proper ending - use it directly
+        summary = rss_summary
+        print(f"  ~ Using RSS summary (has proper ending)")
+    elif ends_with_ellipsis or not has_period_anywhere:
+        # RSS summary is truncated or has no punctuation - fetch original
+        print(f"  ~ RSS summary is truncated/incomplete - fetching original source")
+        link = entry.get("link", "")
+        original_content = fetch_original_content(link)
+        if original_content:
+            summary = original_content
+            print(f"  ~ Fetched full content from original source")
+        else:
+            # Fallback to RSS summary
+            summary = rss_summary
+            print(f"  ~ Using RSS summary (original source fetch failed)")
     else:
-        summary = clean_text(entry.get("summary", ""))
-        print(f"  ~ Using RSS summary (original source fetch failed)")
+        # RSS has punctuation but not at the end - still usable
+        summary = rss_summary
+        print(f"  ~ Using RSS summary (has period in text)")
 
     image_url = extract_image_url(entry)
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
+    # Truncate at the first full stop for Telegram
     summary_ar_telegram = truncate_at_first_sentence(summary_ar_full, 900 if image_url else 3500)
 
     emoji = pick_emoji(title_ar, summary_ar_full)
@@ -647,7 +679,6 @@ def run_one_pass(state: dict) -> int:
                 ok = send_post(message, image_url)
 
                 # ALWAYS add to latest_news.json, even if Telegram send fails
-                # The website should always show the latest news regardless of Telegram status
                 append_news_item({
                     "id": latest_eid,
                     "title": title_ar,
