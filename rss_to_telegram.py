@@ -339,173 +339,94 @@ def extract_image_url(entry) -> str:
 
 def fetch_original_content(link: str) -> str:
     """Fetch the original article content from the source URL.
-    Returns ONLY the article text content, filtering out all HTML/CSS/JS."""
+    Returns the cleaned text content or empty string if failed."""
     if not link:
         return ""
     
     try:
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         resp = requests.get(link, headers=headers, timeout=15)
         resp.raise_for_status()
         
         html = resp.text
         
-        # Method 1: Look for the article content directly by finding text that matches
-        # the expected content pattern (dates, Reuters, etc.)
-        # This is the most reliable approach - look for content that starts with a date
-        
-        # Find all paragraphs first
+        # Get all paragraphs
         p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
         
-        article_paragraphs = []
-        found_article_start = False
-        
+        article_text = []
         for p in p_matches:
-            clean_p = re.sub(r'<[^>]+>', ' ', p).strip()
+            clean_p = re.sub(r'<[^>]+>', ' ', p)
             clean_p = unescape(clean_p)
             clean_p = re.sub(r'\s+', ' ', clean_p).strip()
             
-            # Skip empty or very short paragraphs
-            if len(clean_p) < 20:
+            # Skip short/navigation text
+            if len(clean_p) < 30:
+                continue
+            if re.match(r'^(Follow|Subscribe|Support|Share|Leave a Reply|Please enter|Save my name|Email|Website|Comment|Δ|document\.getElementById|var|function|console\.log)', clean_p, re.IGNORECASE):
+                continue
+            if clean_p.count('{') > 3:  # Skip CSS
                 continue
             
-            # Look for the start of the article - date patterns like "July 25 (Reuters)"
-            if re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+', clean_p):
-                found_article_start = True
-                article_paragraphs.append(clean_p)
-                continue
+            article_text.append(clean_p)
             
-            # Skip if it's clearly navigation or metadata
-            if re.match(r'^(Follow|Subscribe|Support|Donate|Share|Text Size|Leave a Reply|Please enter|Save my name|Email|Website|Comment|Δ|document\.getElementById|var|function|console\.log)', clean_p, re.IGNORECASE):
-                continue
-            
-            # Skip if it contains too many special characters (CSS/JS)
-            if clean_p.count('{') > 3 or clean_p.count('}') > 3 or clean_p.count(';') > 5:
-                continue
-            
-            # If we've found the article start, keep collecting paragraphs
-            if found_article_start:
-                # Skip "Support Our Journalism" and similar
-                if re.match(r'^(Support|India needs|Sustaining|Whether you live|You can take)', clean_p, re.IGNORECASE):
-                    continue
-                # Skip "LEAVE A REPLY" and similar
-                if re.match(r'^LEAVE A REPLY|^Please enter|^You have entered', clean_p, re.IGNORECASE):
-                    break
-                article_paragraphs.append(clean_p)
+            # Stop after we have enough content (first 3-4 paragraphs)
+            if len(article_text) >= 4:
+                break
         
-        # If we found article paragraphs, join them
-        if article_paragraphs:
-            content = " ".join(article_paragraphs)
-            
-            # Clean up any remaining artifacts
-            content = re.sub(r'\{[^}]*\}', '', content)
-            content = re.sub(r'#[a-zA-Z0-9_-]+', '', content)
-            content = re.sub(r'\.tdi_\d+', '', content)
-            content = re.sub(r'[{};:]\s*[a-zA-Z-]+:', '', content)
-            content = re.sub(r'https?://\S+', '', content)
-            content = re.sub(r'\(\s*\)', '', content)
-            content = re.sub(r'\s+', ' ', content).strip()
-            
-            return content
+        if article_text:
+            return " ".join(article_text)
         
         return ""
         
     except Exception as exc:
-        print(f"  ! Failed to fetch original content: {exc}", file=sys.stderr)
+        print(f"  ! Failed to fetch: {exc}", file=sys.stderr)
         return ""
-
-
-def truncate_at_first_sentence(text: str, max_length: int = 3500) -> str:
-    """
-    Truncate text at the first sentence-ending punctuation (. ! ? ۔ ؟)
-    Returns the first sentence only.
-    """
-    if not text:
-        return ""
-    
-    match = re.search(r'[.!?۔؟](?=\s+|$)', text)
-    
-    if match:
-        end_pos = match.end()
-        result = text[:end_pos].strip()
-        result = re.sub(r'\s+$', '', result)
-        return result
-    
-    match = re.search(r'\.\s+', text)
-    if match:
-        end_pos = match.end()
-        result = text[:end_pos].strip()
-        return result
-    
-    match = re.search(r'[؟۔]\s*', text)
-    if match:
-        end_pos = match.end()
-        return text[:end_pos].strip()
-    
-    if len(text) > max_length:
-        return text[:max_length - 1].rsplit(" ", 1)[0] + "…"
-    
-    return text
 
 
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     """Returns (message_text, image_url, title_ar, summary_ar_full).
-
-    Strategy:
-    1. Check RSS summary first
-    2. If it has a proper ending (full stop at the end) -> use it
-    3. If it ends with ... or has no full stop -> fetch from original source
-    4. Fallback to RSS summary if fetch fails
+    
+    Simple logic:
+    - If RSS summary is complete (ends with . ! ? ۔ ؟) -> use it
+    - If RSS summary is truncated (ends with ... or … or no punctuation) -> fetch original
     """
     title = clean_text(entry.get("title", "(no title)"))
     
-    # Get the RSS summary first
+    # Get RSS summary
     rss_summary = clean_text(entry.get("summary", ""))
     
-    # Check if RSS summary has a proper ending (full stop at the end)
+    # Check if RSS summary is truncated (ends with ... or any number of dots)
+    ends_with_ellipsis = re.search(r'\.{2,}\s*$', rss_summary)  # 2 or more dots at the end
+    ends_with_ellipsis = ends_with_ellipsis or rss_summary.endswith('…')
+    
+    # Check if RSS summary ends with a full stop (complete sentence)
     has_full_stop = re.search(r'[.!?۔؟]\s*$', rss_summary)
     
-    # Check if RSS summary ends with ellipsis (truncated)
-    ends_with_ellipsis = re.search(r'…\s*$', rss_summary)
-    
-    # Check if RSS summary has a period anywhere
-    has_period_anywhere = re.search(r'[.!?۔؟]', rss_summary)
-    
-    # Decision logic
-    if has_full_stop:
-        # RSS summary has a proper ending - use it directly
-        summary = rss_summary
-        print(f"  ~ Using RSS summary (has proper ending)")
-    elif ends_with_ellipsis or not has_period_anywhere:
-        # RSS summary is truncated or has no punctuation - fetch original
-        print(f"  ~ RSS summary is truncated/incomplete - fetching original source")
+    if ends_with_ellipsis or not has_full_stop:
+        # RSS is truncated - fetch from original source
+        print(f"  ~ RSS truncated - fetching original source")
         link = entry.get("link", "")
         original_content = fetch_original_content(link)
         if original_content:
             summary = original_content
             print(f"  ~ Fetched full content from original source")
         else:
-            # Fallback to RSS summary
             summary = rss_summary
-            print(f"  ~ Using RSS summary (original source fetch failed)")
+            print(f"  ~ Using RSS summary (fetch failed)")
     else:
-        # RSS has punctuation but not at the end - still usable
+        # RSS is complete - use it
         summary = rss_summary
-        print(f"  ~ Using RSS summary (has period in text)")
+        print(f"  ~ Using RSS summary (complete)")
 
     image_url = extract_image_url(entry)
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
-    # Truncate at the first full stop for Telegram
-    summary_ar_telegram = truncate_at_first_sentence(summary_ar_full, 900 if image_url else 3500)
+    # For Telegram: keep the complete text, don't truncate
+    summary_ar_telegram = summary_ar_full
 
     emoji = pick_emoji(title_ar, summary_ar_full)
 
@@ -679,7 +600,6 @@ def run_one_pass(state: dict) -> int:
                 ok = send_post(message, image_url)
 
                 # ALWAYS add to latest_news.json, even if Telegram send fails
-                # This ensures the website always shows the latest news
                 append_news_item({
                     "id": latest_eid,
                     "title": title_ar,
