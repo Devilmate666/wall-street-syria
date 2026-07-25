@@ -256,6 +256,8 @@ def clean_text(text: str) -> str:
     text = unescape(text)                  # decode entities (&amp; etc.)
     text = strip_urls(text)                # remove any raw links
     text = strip_video_mentions(text)      # remove "watch the video" callouts
+    # Remove trailing ellipsis that RSS.app adds
+    text = re.sub(r'\s*…\s*$', '', text)
     return " ".join(text.split())
 
 
@@ -335,6 +337,68 @@ def extract_image_url(entry) -> str:
     return ""
 
 
+def fetch_original_content(link: str) -> str:
+    """Fetch the original article content from the source URL.
+    Returns the cleaned text content or empty string if failed."""
+    if not link:
+        return ""
+    
+    try:
+        # Use browser-like headers to avoid being blocked
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        resp = requests.get(link, headers=headers, timeout=15)
+        resp.raise_for_status()
+        
+        # Try to extract the main content using heuristics
+        html = resp.text
+        
+        # Try to find content in common article containers
+        patterns = [
+            r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*body[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*story[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*body[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*story[^"]*"[^>]*>(.*?)</div>',
+            r'<div[^>]*id="[^"]*entry[^"]*"[^>]*>(.*?)</div>',
+        ]
+        
+        content = ""
+        for pattern in patterns:
+            match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
+            if match:
+                content = match.group(1)
+                break
+        
+        if not content:
+            # Fallback: try to get all paragraphs
+            p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
+            if p_matches:
+                content = " ".join(p_matches)
+        
+        if content:
+            # Clean the extracted content
+            content = re.sub(r'<[^>]+>', ' ', content)  # Remove HTML tags
+            content = unescape(content)  # Decode HTML entities
+            content = re.sub(r'\s+', ' ', content).strip()  # Normalize whitespace
+            return content
+        
+        return ""
+        
+    except Exception as exc:
+        print(f"  ! Failed to fetch original content: {exc}", file=sys.stderr)
+        return ""
+
+
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     """Returns (message_text, image_url, title_ar, summary_ar_full).
 
@@ -344,7 +408,19 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     still respects Telegram's caption/message length caps.
     """
     title = clean_text(entry.get("title", "(no title)"))
-    summary = clean_text(entry.get("summary", ""))
+    
+    # Try to get the full content from the original source first
+    link = entry.get("link", "")
+    original_content = fetch_original_content(link)
+    
+    if original_content:
+        # Use the original source content
+        summary = original_content
+        print(f"  ~ Fetched full content from original source")
+    else:
+        # Fallback to RSS feed summary
+        summary = clean_text(entry.get("summary", ""))
+        print(f"  ~ Using RSS summary (original source fetch failed)")
 
     image_url = extract_image_url(entry)
 
@@ -353,11 +429,9 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
 
     # Truncate at the first full stop (period) for a clean sentence break.
     # This gives a natural "sentence preview" instead of cutting mid-word.
-    # Use the already-translated Arabic text so we get proper Arabic punctuation.
     summary_ar_telegram = summary_ar_full
     if summary_ar_telegram:
         # Look for sentence-ending punctuation in Arabic/Latin: . ! ? ۔
-        # The Arabic full stop is "۔" but most Arabic text uses "." or "؟" or "!"
         match = re.search(r'[.!?۔؟]\s*', summary_ar_telegram)
         if match:
             # Cut after the first sentence-ending punctuation + any trailing spaces
