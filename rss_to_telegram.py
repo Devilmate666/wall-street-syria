@@ -269,18 +269,52 @@ def is_mostly_arabic(text: str) -> bool:
     return (arabic_chars / letters) > 0.5
 
 
+def _looks_like_translate_failure(original: str, translated: str) -> bool:
+    """Detect the specific failure mode where Google Translate (via the free
+    deep-translator scrape) returns an HTTP error page's body text as if it
+    were a successful translation, instead of raising. Two checks:
+    1) known error-page phrasing, 2) target was Arabic but the result isn't
+    mostly Arabic -- either way it's not a real translation."""
+    if not translated:
+        return True
+    lowered = translated.lower()
+    error_markers = ("error 500", "that's an error", "that’s an error", "server error")
+    if any(marker in lowered for marker in error_markers):
+        return True
+    if translated == original:
+        return False  # untranslated passthrough (e.g. nothing to translate) is fine
+    return not is_mostly_arabic(translated)
+
+
 def to_arabic(text: str) -> str:
     """Translate text to Arabic. If it's already Arabic, or translation
-    fails for any reason, just return the original text untouched."""
+    fails for any reason (including Google quietly handing back an error
+    page instead of raising), just return the original text untouched.
+    Retries a couple of times first, since the free Google Translate
+    endpoint is often just transiently rate-limited rather than truly down."""
     text = text.strip()
     if not text or is_mostly_arabic(text):
         return text
-    try:
-        translated = GoogleTranslator(source="auto", target="ar").translate(text)
-        return translated or text
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ! Translation failed, using original text: {exc}", file=sys.stderr)
-        return text
+
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            translated = GoogleTranslator(source="auto", target="ar").translate(text)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! Translation attempt {attempt}/{attempts} failed: {exc}", file=sys.stderr)
+            translated = None
+
+        if translated and not _looks_like_translate_failure(text, translated):
+            return translated
+
+        if translated:
+            print(f"  ! Translation attempt {attempt}/{attempts} returned a bad result "
+                  f"(likely a Google error page), retrying...", file=sys.stderr)
+        if attempt < attempts:
+            time.sleep(2)
+
+    print("  ! All translation attempts failed, using original text instead.", file=sys.stderr)
+    return text
 
 
 def escape_markdown_v2(text: str) -> str:
