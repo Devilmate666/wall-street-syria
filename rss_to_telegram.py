@@ -221,7 +221,7 @@ BBCODE_TAG_RE = re.compile(r"\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]")
 URL_RE = re.compile(r"https?://\S+")
 
 # Sentence-splitting delimiters (Arabic + Latin punctuation)
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟۔])\s+")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟。])\s+")
 
 # Any sentence containing one of these is a "go watch the video" callout
 # that's meaningless without a link, so we drop the whole sentence.
@@ -335,95 +335,31 @@ def extract_image_url(entry) -> str:
     return ""
 
 
-def fetch_original_content(link: str) -> str:
-    """Fetch the original article content from the source URL.
-    Returns the cleaned text content or empty string if failed."""
-    if not link:
-        return ""
-    
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        resp = requests.get(link, headers=headers, timeout=15)
-        resp.raise_for_status()
-        
-        html = resp.text
-        
-        # Get all paragraphs
-        p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
-        
-        article_text = []
-        for p in p_matches:
-            clean_p = re.sub(r'<[^>]+>', ' ', p)
-            clean_p = unescape(clean_p)
-            clean_p = re.sub(r'\s+', ' ', clean_p).strip()
-            
-            # Skip short/navigation text
-            if len(clean_p) < 30:
-                continue
-            if re.match(r'^(Follow|Subscribe|Support|Share|Leave a Reply|Please enter|Save my name|Email|Website|Comment|Δ|document\.getElementById|var|function|console\.log)', clean_p, re.IGNORECASE):
-                continue
-            if clean_p.count('{') > 3:  # Skip CSS
-                continue
-            
-            article_text.append(clean_p)
-            
-            # Stop after we have enough content (first 3-4 paragraphs)
-            if len(article_text) >= 4:
-                break
-        
-        if article_text:
-            return " ".join(article_text)
-        
-        return ""
-        
-    except Exception as exc:
-        print(f"  ! Failed to fetch: {exc}", file=sys.stderr)
-        return ""
-
-
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     """Returns (message_text, image_url, title_ar, summary_ar_full).
 
-    Simple logic:
-    - If RSS summary is complete (ends with . ! ? ۔ ؟) -> use it
-    - If RSS summary is truncated (ends with ... or … or no punctuation) -> fetch original
-    - NO character truncation - send full text
+    title_ar / summary_ar_full are the complete translated title and
+    description (no Telegram-length trimming) so the website's news feed
+    can always show the full text, even though the Telegram message itself
+    still respects Telegram's caption/message length caps.
     """
     title = clean_text(entry.get("title", "(no title)"))
-    
-    # Get RSS summary
-    rss_summary = clean_text(entry.get("summary", ""))
-    
-    # Check if RSS is truncated (ends with ... or …)
-    is_truncated = rss_summary.endswith('…') or rss_summary.endswith('...') or re.search(r'\.{2,}$', rss_summary)
-    
-    # Also check if it has a proper ending
-    has_ending = re.search(r'[.!?۔؟]\s*$', rss_summary)
-    
-    # If truncated OR no proper ending, try to fetch from original source
-    if is_truncated or not has_ending:
-        print(f"  ~ RSS incomplete - fetching original source")
-        link = entry.get("link", "")
-        original = fetch_original_content(link)
-        if original:
-            summary = original
-            print(f"  ~ Using original source")
-        else:
-            summary = rss_summary
-            print(f"  ~ Using RSS (fetch failed)")
-    else:
-        summary = rss_summary
-        print(f"  ~ Using RSS (complete)")
+    summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
 
-    # NO TRUNCATION - send full text to Telegram
+    # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
+    # Leave headroom for the emoji/title/markdown-escaping overhead, but
+    # otherwise let the full source summary through instead of cutting it
+    # short artificially. This trimming only affects the Telegram message --
+    # the full text above is kept as-is for the website.
+    summary_limit = 900 if image_url else 3500
     summary_ar_telegram = summary_ar_full
+    if len(summary_ar_telegram) > summary_limit:
+        summary_ar_telegram = summary_ar_telegram[: summary_limit - 1].rsplit(" ", 1)[0] + "…"
 
     emoji = pick_emoji(title_ar, summary_ar_full)
 
@@ -631,25 +567,24 @@ def run_one_pass(state: dict) -> int:
                 message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
 
-                # ALWAYS add to latest_news.json, even if Telegram send fails
-                append_news_item({
-                    "id": latest_eid,
-                    "title": title_ar,
-                    "description": summary_ar_full,
-                    "link": latest_entry.get("link", ""),
-                    "image": image_url,
-                    "source": name,
-                    "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                })
-
                 if ok:
                     newly_seen_ids.append(latest_eid)
                     newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
+
+                    append_news_item({
+                        "id": latest_eid,
+                        "title": title_ar,
+                        "description": summary_ar_full,
+                        "link": latest_entry.get("link", ""),
+                        "image": image_url,
+                        "source": name,
+                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    })
                 else:
-                    print("  ~ send failed, but news was added to latest_news.json for the website")
+                    print("  ~ send failed, will retry this one next pass")
 
                 time.sleep(SEND_DELAY_SECONDS)
 
