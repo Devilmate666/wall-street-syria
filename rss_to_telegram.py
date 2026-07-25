@@ -356,77 +356,60 @@ def fetch_original_content(link: str) -> str:
         
         html = resp.text
         
-        # Method 1: Try to find article content in specific containers
-        patterns = [
-            # Article body with specific classes
-            r'<div[^>]*class="[^"]*article[_-]body[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*post[_-]content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*entry[_-]content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*single[_-]content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*article[_-]content[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*tdb-block-inner[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*id="[^"]*postcontent[^"]*"[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*story-content[^"]*"[^>]*>(.*?)</div>',
-        ]
+        # Method 1: Look for the article content directly by finding text that matches
+        # the expected content pattern (dates, Reuters, etc.)
+        # This is the most reliable approach - look for content that starts with a date
         
-        content = ""
-        for pattern in patterns:
-            match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
-            if match:
-                content = match.group(1)
-                break
+        # Find all paragraphs first
+        p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
         
-        if not content:
-            # Method 2: Extract all paragraph texts directly - cleaner approach
-            p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
-            if p_matches:
-                filtered = []
-                for p in p_matches:
-                    clean_p = re.sub(r'<[^>]+>', ' ', p).strip()
-                    # Skip paragraphs that are clearly not article content
-                    if len(clean_p) > 30:
-                        # Skip if it's just a date, author, or metadata
-                        if re.match(r'^(July|August|September|October|November|December|January|February|March|April|May|June)\s+\d+', clean_p):
-                            continue
-                        if re.match(r'^By\s+', clean_p):
-                            continue
-                        if re.match(r'^Share\s+', clean_p):
-                            continue
-                        if re.match(r'^Follow\s+Us', clean_p):
-                            continue
-                        # Skip if it contains mostly code/JS
-                        if clean_p.count('{') > 5 or clean_p.count('}') > 5:
-                            continue
-                        # Skip if it's just a single word or very short
-                        if len(clean_p.split()) < 3:
-                            continue
-                        filtered.append(clean_p)
-                if filtered:
-                    content = " ".join(filtered)
+        article_paragraphs = []
+        found_article_start = False
         
-        if content:
-            # Clean the extracted content
-            content = re.sub(r'<[^>]+>', ' ', content)
-            content = unescape(content)
+        for p in p_matches:
+            clean_p = re.sub(r'<[^>]+>', ' ', p).strip()
+            clean_p = unescape(clean_p)
+            clean_p = re.sub(r'\s+', ' ', clean_p).strip()
             
-            # Remove CSS/JS artifacts
-            content = re.sub(r'\.tdi_\d+', '', content)
+            # Skip empty or very short paragraphs
+            if len(clean_p) < 20:
+                continue
+            
+            # Look for the start of the article - date patterns like "July 25 (Reuters)"
+            if re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+', clean_p):
+                found_article_start = True
+                article_paragraphs.append(clean_p)
+                continue
+            
+            # Skip if it's clearly navigation or metadata
+            if re.match(r'^(Follow|Subscribe|Support|Donate|Share|Text Size|Leave a Reply|Please enter|Save my name|Email|Website|Comment|Δ|document\.getElementById|var|function|console\.log)', clean_p, re.IGNORECASE):
+                continue
+            
+            # Skip if it contains too many special characters (CSS/JS)
+            if clean_p.count('{') > 3 or clean_p.count('}') > 3 or clean_p.count(';') > 5:
+                continue
+            
+            # If we've found the article start, keep collecting paragraphs
+            if found_article_start:
+                # Skip "Support Our Journalism" and similar
+                if re.match(r'^(Support|India needs|Sustaining|Whether you live|You can take)', clean_p, re.IGNORECASE):
+                    continue
+                # Skip "LEAVE A REPLY" and similar
+                if re.match(r'^LEAVE A REPLY|^Please enter|^You have entered', clean_p, re.IGNORECASE):
+                    break
+                article_paragraphs.append(clean_p)
+        
+        # If we found article paragraphs, join them
+        if article_paragraphs:
+            content = " ".join(article_paragraphs)
+            
+            # Clean up any remaining artifacts
             content = re.sub(r'\{[^}]*\}', '', content)
             content = re.sub(r'#[a-zA-Z0-9_-]+', '', content)
-            
-            # Remove common navigation/menu text
-            nav_words = r'\b(Home|News|World|Profiles|Opinion|Sports|Business|Tech|Science|Health|Politics|Entertainment|Lifestyle|Features|Videos|Photos)\b'
-            content = re.sub(nav_words, '', content, flags=re.IGNORECASE)
-            
-            # Remove "Skip to content" and similar
-            content = re.sub(r'SKIP TO CONTENT|Skip to content', '', content, flags=re.IGNORECASE)
-            
-            # Remove any remaining CSS-like text
+            content = re.sub(r'\.tdi_\d+', '', content)
             content = re.sub(r'[{};:]\s*[a-zA-Z-]+:', '', content)
             content = re.sub(r'https?://\S+', '', content)
             content = re.sub(r'\(\s*\)', '', content)
-            
-            # Remove excessive whitespace
             content = re.sub(r'\s+', ' ', content).strip()
             
             return content
