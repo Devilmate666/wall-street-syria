@@ -1,5 +1,14 @@
 [
   {
+    "id": "26e10b45d6d0039b377d5af187026752b8188762d1b6f85f704440be66e5cd41",
+    "title": "هل \"تشتعل\" سوق التنبؤات في المملكة المتحدة، لتكرر الازدهار الأمريكي؟",
+    "description": "كأس العالم وأحداث مثل الانتخابات الفرعية لكلاكتون تثير الاهتمام بمواقع مثل بوليماركت، حيث يتمكن المقامرون في المملكة المتحدة من تجاوز التنظيم بسهولة",
+    "link": "https://www.theguardian.com/world/2026/jul/26/uk-prediction-market-boom-regulation-polymarket-gambling",
+    "image": "https://i.guim.co.uk/img/media/53655ca13f741fafb5e28ebb0e55c4c4bc6773ef/324_0_3327_2662/master/3327.jpg?width=1200&height=1200&quality=85&auto=format&fit=crop&s=d3cf225112b478f993ff57da694c1d50",
+    "source": "Forex Bundle",
+    "sent_at": "2026-07-26T13:39:14Z"
+  },
+  {
     "id": "e2f070d2406a6ed001641899526a85355b9439bda6d3f3c70373f427ad073a2a",
     "title": "لماذا يشعر المستثمرون بالقلق من ازدهار النفقات الرأسمالية لشركات التكنولوجيا الكبرى في مجال الذكاء الاصطناعي؟",
     "description": "لماذا القلق الشديد بشأن الإنفاق على الذكاء الاصطناعي؟",
@@ -34,14 +43,5 @@
     "image": "https://media.cnn.com/api/v1/images/stellar/prod/2026-03-07t204221z-74407929-rc2wzjatbv9a-rtrmadp-3-iran-crisis-transfer-usa.jpg?c=16x9&q=w_800,c_fill",
     "source": "Forex Bundle",
     "sent_at": "2026-07-26T05:23:04Z"
-  },
-  {
-    "id": "7968f718b939389e481e7131e7e9012625aec9b8f1e2320ee8454ca6844061b5",
-    "title": "هل هو الحل \"الذهبي\" لضغوط العملات الأجنبية في الهند؟",
-    "description": "ومع انخفاض احتياطيات النقد الأجنبي إلى 1.1 مليار دولار فقط في يونيو، وهو ما يكفي بالكاد لتغطية تكاليف الواردات الأساسية لمدة 2-3 أسابيع، اقترح بنك الاحتياطي الهندي التعهد بـ 50 طنا من الذهب لزيادة النقد الأجنبي.",
-    "link": "https://indianexpress.com/article/opinion/columns/a-golden-fix-for-indias-forex-stress-10803702/",
-    "image": "https://images.indianexpress.com/2026/07/GOLD26Oopn.jpg",
-    "source": "Forex Bundle",
-    "sent_at": "2026-07-26T01:42:54Z"
   }
 ]
