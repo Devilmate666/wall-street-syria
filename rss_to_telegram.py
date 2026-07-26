@@ -35,6 +35,7 @@ from pathlib import Path
 
 import feedparser
 import requests
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,10 @@ REQUEST_TIMEOUT_SECONDS = 20
 # direct fetch gets blocked (403/429/etc), retry once through a public
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
+
+# Timeout for fetching a source article page, used only to complete the
+# one sentence a feed cut off with "..." -- not for scraping full articles.
+ARTICLE_FETCH_TIMEOUT_SECONDS = 15
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -221,7 +226,7 @@ BBCODE_TAG_RE = re.compile(r"\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]")
 URL_RE = re.compile(r"https?://\S+")
 
 # Sentence-splitting delimiters (Arabic + Latin punctuation)
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟۔])\s+")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟。])\s+")
 
 # Any sentence containing one of these is a "go watch the video" callout
 # that's meaningless without a link, so we drop the whole sentence.
@@ -259,6 +264,146 @@ def clean_text(text: str) -> str:
     return " ".join(text.split())
 
 
+# Characters that mark the end of a real sentence (Arabic + Latin).
+SENTENCE_END_CHARS = ".!?؟。"
+TRAILING_ELLIPSIS_RE = re.compile(r"(\.\.\.|…)\s*$")
+
+
+def ends_with_ellipsis(text: str) -> bool:
+    return bool(text) and bool(TRAILING_ELLIPSIS_RE.search(text.strip()))
+
+
+def split_complete_and_partial(text: str) -> tuple[str, str]:
+    """Split feed text into (complete_sentences, partial_tail). The
+    partial_tail is whatever trails the last real sentence-ending
+    punctuation, after stripping a trailing '...' -- i.e. the incomplete
+    fragment a feed leaves behind when it truncates a summary."""
+    text = text.strip()
+    if not text:
+        return "", ""
+
+    text = TRAILING_ELLIPSIS_RE.sub("", text).strip()
+    if not text:
+        return "", ""
+
+    if text[-1] in SENTENCE_END_CHARS:
+        return text, ""
+
+    last_idx = max((text.rfind(ch) for ch in SENTENCE_END_CHARS), default=-1)
+    if last_idx == -1:
+        return "", text  # no complete sentence at all, it's all a fragment
+
+    return text[: last_idx + 1].strip(), text[last_idx + 1:].strip()
+
+
+def end_at_sentence_boundary(text: str) -> str:
+    """Fallback safety net: if text doesn't end on real sentence-ending
+    punctuation (e.g. after a hard length cut for Telegram), trim back to
+    the last one found rather than leaving it mid-word. Used only as a
+    last resort -- the normal path is completing the sentence from the
+    source article instead of dropping it (see complete_teaser_summary)."""
+    complete, _partial = split_complete_and_partial(text)
+    return complete if complete else text.strip()
+
+
+def fetch_raw_article_text(url: str) -> str:
+    """Fetch the source article page and return its cleaned paragraph text,
+    untranslated, for locating where a truncated feed sentence continues.
+    Returns '' on any failure -- callers must handle that gracefully."""
+    if not url:
+        return ""
+
+    resp = None
+    try:
+        resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Article fetch failed ({exc}); retrying via proxy...")
+        try:
+            from urllib.parse import quote
+
+            proxy_url = PROXY_FETCH_URL_TEMPLATE.format(encoded_url=quote(url, safe=""))
+            resp = requests.get(proxy_url, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+        except Exception as exc2:  # noqa: BLE001
+            print(f"  ~ Article proxy fetch also failed: {exc2}")
+            return ""
+
+    try:
+        soup = BeautifulSoup(resp.content, "html.parser")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ~ Article HTML parse failed: {exc}")
+        return ""
+
+    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript"]):
+        tag.decompose()
+
+    article_tag = soup.find("article")
+    container = article_tag if article_tag is not None else soup
+    paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
+    return " ".join(p for p in paragraphs if p)
+
+
+def complete_partial_sentence(fragment: str, article_text: str) -> str:
+    """Find where `fragment` (the feed's incomplete tail) appears in the
+    full article text, and return that same sentence in full. Returns ''
+    if no confident match is found, so the caller can fall back safely."""
+    if not fragment or not article_text:
+        return ""
+
+    frag_words = fragment.split()
+    # Anchor on the first several words -- more robust than matching the
+    # whole fragment verbatim, since minor whitespace/formatting can
+    # differ between the feed's teaser and the live page.
+    anchor = " ".join(frag_words[:8])
+    if len(anchor) < 8:
+        return ""
+
+    idx = article_text.lower().find(anchor.lower())
+    if idx == -1:
+        return ""
+
+    end_idx = -1
+    for i in range(idx, len(article_text)):
+        if article_text[i] in SENTENCE_END_CHARS:
+            end_idx = i
+            break
+    if end_idx == -1:
+        return ""
+
+    completed = article_text[idx: end_idx + 1].strip()
+    # Sanity check: the completed sentence should be at least as long as
+    # the fragment we already had -- otherwise something's off.
+    if len(completed) < len(fragment.strip()):
+        return ""
+    return completed
+
+
+def complete_teaser_summary(summary: str, link: str) -> str:
+    """If `summary` was cut off with '...', keep every complete sentence
+    exactly as the feed gave it, and complete only the one sentence that
+    got cut off -- by fetching the source article and finding where that
+    sentence continues. Nothing beyond that one sentence is ever added.
+    Falls back to just dropping the incomplete tail if the source can't
+    be fetched or the fragment can't be confidently located."""
+    if not ends_with_ellipsis(summary):
+        return summary
+
+    complete_part, partial_fragment = split_complete_and_partial(summary)
+    if not partial_fragment:
+        return complete_part
+
+    article_text = fetch_raw_article_text(link)
+    completed_sentence = complete_partial_sentence(partial_fragment, article_text)
+
+    if completed_sentence:
+        return f"{complete_part} {completed_sentence}".strip() if complete_part else completed_sentence
+
+    # Couldn't safely complete it -- drop the incomplete tail rather than
+    # showing a fetch failure or a sentence cut off mid-word.
+    return complete_part
+
+
 def is_mostly_arabic(text: str) -> bool:
     if not text:
         return True
@@ -269,18 +414,52 @@ def is_mostly_arabic(text: str) -> bool:
     return (arabic_chars / letters) > 0.5
 
 
+def _looks_like_translate_failure(original: str, translated: str) -> bool:
+    """Detect the specific failure mode where Google Translate (via the free
+    deep-translator scrape) returns an HTTP error page's body text as if it
+    were a successful translation, instead of raising. Two checks:
+    1) known error-page phrasing, 2) target was Arabic but the result isn't
+    mostly Arabic -- either way it's not a real translation."""
+    if not translated:
+        return True
+    lowered = translated.lower()
+    error_markers = ("error 500", "that's an error", "that’s an error", "server error")
+    if any(marker in lowered for marker in error_markers):
+        return True
+    if translated == original:
+        return False  # untranslated passthrough (e.g. nothing to translate) is fine
+    return not is_mostly_arabic(translated)
+
+
 def to_arabic(text: str) -> str:
     """Translate text to Arabic. If it's already Arabic, or translation
-    fails for any reason, just return the original text untouched."""
+    fails for any reason (including Google quietly handing back an error
+    page instead of raising), just return the original text untouched.
+    Retries a couple of times first, since the free Google Translate
+    endpoint is often just transiently rate-limited rather than truly down."""
     text = text.strip()
     if not text or is_mostly_arabic(text):
         return text
-    try:
-        translated = GoogleTranslator(source="auto", target="ar").translate(text)
-        return translated or text
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ! Translation failed, using original text: {exc}", file=sys.stderr)
-        return text
+
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            translated = GoogleTranslator(source="auto", target="ar").translate(text)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! Translation attempt {attempt}/{attempts} failed: {exc}", file=sys.stderr)
+            translated = None
+
+        if translated and not _looks_like_translate_failure(text, translated):
+            return translated
+
+        if translated:
+            print(f"  ! Translation attempt {attempt}/{attempts} returned a bad result "
+                  f"(likely a Google error page), retrying...", file=sys.stderr)
+        if attempt < attempts:
+            time.sleep(2)
+
+    print("  ! All translation attempts failed, using original text instead.", file=sys.stderr)
+    return text
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -335,168 +514,52 @@ def extract_image_url(entry) -> str:
     return ""
 
 
-def fetch_original_content(link: str) -> str:
-    """Fetch the original article content from the source URL.
-    Returns the cleaned text content or empty string if failed."""
-    if not link:
-        return ""
-    
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        resp = requests.get(link, headers=headers, timeout=15)
-        resp.raise_for_status()
-        
-        html = resp.text
-        
-        # Get all paragraphs
-        p_matches = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
-        
-        article_text = []
-        for p in p_matches:
-            clean_p = re.sub(r'<[^>]+>', ' ', p)
-            clean_p = unescape(clean_p)
-            clean_p = re.sub(r'\s+', ' ', clean_p).strip()
-            
-            # Skip short/navigation text
-            if len(clean_p) < 30:
-                continue
-            if re.match(r'^(Follow|Subscribe|Support|Share|Leave a Reply|Please enter|Save my name|Email|Website|Comment|Δ|document\.getElementById|var|function|console\.log)', clean_p, re.IGNORECASE):
-                continue
-            if clean_p.count('{') > 3:  # Skip CSS
-                continue
-            
-            article_text.append(clean_p)
-            
-            # Stop after we have enough content (first 3-4 paragraphs)
-            if len(article_text) >= 4:
-                break
-        
-        if article_text:
-            return " ".join(article_text)
-        
-        return ""
-        
-    except Exception as exc:
-        print(f"  ! Failed to fetch: {exc}", file=sys.stderr)
-        return ""
-
-
 def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_full).
-    
-    Both Telegram and website get the same completed sentence ending at the first full stop.
+    """Returns (message_text, image_url, title_ar, summary_ar_telegram).
+
+    summary_ar_telegram is the exact same (Telegram-length-trimmed) text
+    that gets posted to the channel, so the website's news ticker always
+    shows precisely what viewers see on Telegram -- no separate "fuller"
+    version, no extra fetching, nothing that could look inconsistent
+    between the two.
     """
     title = clean_text(entry.get("title", "(no title)"))
-    
-    # Get RSS summary
-    rss_summary = clean_text(entry.get("summary", ""))
-    
-    # Check if RSS has a proper ending (full stop, exclamation, question mark)
-    has_proper_ending = re.search(r'[.!?۔؟]\s*$', rss_summary)
-    
-    # Check if RSS is truncated (ends with ... or …)
-    is_truncated = rss_summary.endswith('…') or rss_summary.endswith('...') or re.search(r'\.{2,}$', rss_summary)
-    
-    # Check if RSS has any punctuation at all
-    has_any_punctuation = re.search(r'[.!?۔؟]', rss_summary)
-    
-    # Start with RSS summary
-    summary = rss_summary
-    
-    # Case 1: RSS has proper ending - use it directly
-    if has_proper_ending:
-        print(f"  ~ Using RSS (has proper ending)")
-        summary = rss_summary
-    
-    # Case 2: RSS is truncated (ends with ...) OR has no punctuation - fetch original to COMPLETE it
-    elif is_truncated or not has_any_punctuation:
-        print(f"  ~ RSS incomplete - fetching completion from original source")
-        link = entry.get("link", "")
-        original = fetch_original_content(link)
-        if original:
-            # Remove the trailing dots/ellipsis from RSS
-            rss_clean = re.sub(r'[.\s…]+$', '', rss_summary)
-            
-            # Find where RSS ends in the original text
-            # Look for the text after the last 5 words in RSS
-            last_words = rss_clean.split()[-5:] if rss_clean.split() else []
-            last_words_str = " ".join(last_words)
-            
-            # Find the position in original where RSS ends
-            if last_words_str and last_words_str in original:
-                # Find the position after the last words
-                pos = original.find(last_words_str) + len(last_words_str)
-                # Get the continuation from original
-                continuation = original[pos:].strip()
-                
-                # Find the first full stop in the continuation
-                match = re.search(r'[.!?۔؟]', continuation)
-                if match:
-                    # Add the continuation up to the first full stop
-                    summary = rss_clean + " " + continuation[:match.end()]
-                else:
-                    summary = rss_clean + " " + continuation
-                print(f"  ~ Completed the text from original source")
-            else:
-                # If we can't find the exact match, try a different approach
-                # Look for the last few words without the last word
-                for i in range(4, 0, -1):
-                    last_words = rss_clean.split()[-i:] if rss_clean.split() else []
-                    last_words_str = " ".join(last_words)
-                    if last_words_str and last_words_str in original:
-                        pos = original.find(last_words_str) + len(last_words_str)
-                        continuation = original[pos:].strip()
-                        match = re.search(r'[.!?۔؟]', continuation)
-                        if match:
-                            summary = rss_clean + " " + continuation[:match.end()]
-                            print(f"  ~ Completed the text from original source")
-                            break
-                else:
-                    # Ultimate fallback: find matching text
-                    # Try to find the RSS text in the original
-                    if rss_clean[:50] in original:
-                        pos = original.find(rss_clean[:50]) + len(rss_clean[:50])
-                        continuation = original[pos:].strip()
-                        match = re.search(r'[.!?۔؟]', continuation)
-                        if match:
-                            summary = rss_clean + " " + continuation[:match.end()]
-                            print(f"  ~ Completed the text from original source")
-                        else:
-                            summary = rss_clean
-                            print(f"  ~ Using RSS (could not complete)")
-                    else:
-                        summary = rss_clean
-                        print(f"  ~ Using RSS (could not complete)")
-        else:
-            summary = rss_summary
-            print(f"  ~ Using RSS (fetch failed)")
-    
-    else:
-        # RSS has punctuation but not at the end - use it as-is
-        print(f"  ~ Using RSS (has punctuation but not at end)")
-        summary = rss_summary
+    summary = clean_text(entry.get("summary", ""))
 
     image_url = extract_image_url(entry)
+    link = entry.get("link", "")
+
+    # If the feed cut the summary off with "...", complete just that one
+    # sentence from the source article -- every other sentence the feed
+    # already gave us is kept exactly as-is, untouched. This happens on
+    # the raw (pre-translation) text so the source-page match is reliable.
+    summary = complete_teaser_summary(summary, link)
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
+    # Safety net only: if something still ends mid-sentence (e.g. no "..."
+    # was present but the source itself was malformed), trim back to the
+    # last real sentence boundary rather than showing a dangling clause.
+    summary_ar_full = end_at_sentence_boundary(summary_ar_full)
 
-    # Find the first full stop and cut there (for BOTH Telegram and Website)
-    match = re.search(r'[.!?۔؟]', summary_ar_full)
-    if match:
-        final_summary = summary_ar_full[:match.end()]
-    else:
-        final_summary = summary_ar_full
+    # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
+    # Leave headroom for the emoji/title/markdown-escaping overhead, but
+    # otherwise let the full source summary through instead of cutting it
+    # short artificially.
+    summary_limit = 900 if image_url else 3500
+    summary_ar_telegram = summary_ar_full
+    if len(summary_ar_telegram) > summary_limit:
+        summary_ar_telegram = summary_ar_telegram[:summary_limit].rsplit(" ", 1)[0]
+        # This hard length cut can itself land mid-sentence -- clean that
+        # up the same way instead of appending an ellipsis.
+        summary_ar_telegram = end_at_sentence_boundary(summary_ar_telegram)
 
-    emoji = pick_emoji(title_ar, final_summary)
+    emoji = pick_emoji(title_ar, summary_ar_full)
 
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
-    if final_summary and final_summary != title_ar:
-        parts.append(escape_markdown_v2(final_summary))
-    
-    return "\n\n".join(parts), image_url, title_ar, final_summary
+    if summary_ar_telegram and summary_ar_telegram != title_ar:
+        parts.append(escape_markdown_v2(summary_ar_telegram))
+    return "\n\n".join(parts), image_url, title_ar, summary_ar_telegram
 
 
 def fetch_feed(name: str, url: str):
@@ -694,19 +757,8 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message, image_url, title_ar, summary_ar_full = build_message(name, latest_entry)
+                message, image_url, title_ar, summary_ar_telegram = build_message(name, latest_entry)
                 ok = send_post(message, image_url)
-
-                # ALWAYS add to latest_news.json, even if Telegram send fails
-                append_news_item({
-                    "id": latest_eid,
-                    "title": title_ar,
-                    "description": summary_ar_full,
-                    "link": latest_entry.get("link", ""),
-                    "image": image_url,
-                    "source": name,
-                    "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                })
 
                 if ok:
                     newly_seen_ids.append(latest_eid)
@@ -714,8 +766,18 @@ def run_one_pass(state: dict) -> int:
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
+
+                    append_news_item({
+                        "id": latest_eid,
+                        "title": title_ar,
+                        "description": summary_ar_telegram,
+                        "link": latest_entry.get("link", ""),
+                        "image": image_url,
+                        "source": name,
+                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    })
                 else:
-                    print("  ~ send failed, but news was added to latest_news.json for the website")
+                    print("  ~ send failed, will retry this one next pass")
 
                 time.sleep(SEND_DELAY_SECONDS)
 
@@ -781,11 +843,11 @@ def run_backfill_news() -> None:
 
     items = []
     for _, name, entry in top:
-        _, image_url, title_ar, summary_ar_full = build_message(name, entry)
+        _, image_url, title_ar, summary_ar_telegram = build_message(name, entry)
         items.append({
             "id": entry_id(entry),
             "title": title_ar,
-            "description": summary_ar_full,
+            "description": summary_ar_telegram,
             "link": entry.get("link", ""),
             "image": image_url,
             "source": name,
