@@ -282,6 +282,62 @@ def clean_text(text: str) -> str:
 SENTENCE_END_CHARS = ".!?؟。"
 TRAILING_ELLIPSIS_RE = re.compile(r"(\.\.\.|…)\s*$")
 
+# Marker inserted between paragraphs when we fetch the full source article,
+# so paragraph boundaries survive as a fallback stopping point even though
+# everything else about the text is collapsed to single-line/whitespace.
+PARAGRAPH_BREAK = "\n\n"
+
+
+def _is_real_sentence_end(text: str, pos: int) -> bool:
+    """Is the punctuation mark at `pos` an actual sentence end, or a
+    false positive? The only false positive we guard against is a '.'
+    that's really a decimal point / part of a number (e.g. the '.' in
+    '1.1', '3.5 مليار دولار', '99.9%') -- a period only counts as a real
+    sentence end if it is NOT sitting between two digits."""
+    ch = text[pos]
+    if ch != ".":
+        return True
+    prev_char = text[pos - 1] if pos > 0 else ""
+    next_char = text[pos + 1] if pos + 1 < len(text) else ""
+    if prev_char.isdigit() and next_char.isdigit():
+        return False  # e.g. "1.1" -- decimal point, not a sentence end
+    return True
+
+
+def find_next_sentence_end(text: str, start: int) -> int:
+    """Scan forward from `start` for the next REAL sentence-ending mark,
+    skipping any false positives (like decimal points) along the way no
+    matter how many appear. Returns -1 if none exists in the rest of the
+    text."""
+    i = start
+    while i < len(text):
+        candidates = [text.find(ch, i) for ch in SENTENCE_END_CHARS]
+        candidates = [c for c in candidates if c != -1]
+        if not candidates:
+            return -1
+        pos = min(candidates)
+        if _is_real_sentence_end(text, pos):
+            return pos
+        i = pos + 1
+    return -1
+
+
+def find_last_sentence_end(text: str) -> int:
+    """Scan backward through `text` for the last REAL sentence-ending
+    mark, skipping false positives (decimal points) no matter how many
+    trail the text. Returns -1 if none exists."""
+    limit = len(text)
+    while limit > 0:
+        candidates = [text.rfind(ch, 0, limit) for ch in SENTENCE_END_CHARS]
+        candidates = [c for c in candidates if c != -1]
+        if not candidates:
+            return -1
+        pos = max(candidates)
+        if _is_real_sentence_end(text, pos):
+            return pos
+        limit = pos  # keep looking further back, excluding this false positive
+    return -1
+
 # Some sites block requests from cloud/datacenter IPs (like GitHub Actions
 # runners) even with browser-like headers. If a direct fetch gets blocked,
 # retry once through a public read-only proxy that fetches server-side
@@ -302,7 +358,7 @@ def split_complete_and_incomplete(text: str) -> tuple[str, str]:
     text = text.strip()
     if not text:
         return "", ""
-    last_idx = max((text.rfind(ch) for ch in SENTENCE_END_CHARS), default=-1)
+    last_idx = find_last_sentence_end(text)
     if last_idx == -1:
         return "", text
     return text[: last_idx + 1].strip(), text[last_idx + 1 :].strip()
@@ -340,16 +396,29 @@ def _fetch_article_paragraph_text(url: str) -> str:
 
     article_tag = soup.find("article")
     container = article_tag if article_tag is not None else soup
-    paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    return clean_text(" ".join(p for p in paragraphs if p))
+    paragraphs = [clean_text(p.get_text(" ", strip=True)) for p in container.find_all("p")]
+    # Join with a paragraph-break marker (not a plain space) so paragraph
+    # boundaries survive into full_text. Each paragraph itself is already
+    # single-line/whitespace-clean via clean_text, so this only adds
+    # structure between paragraphs, never inside one.
+    return PARAGRAPH_BREAK.join(p for p in paragraphs if p)
 
 
 def complete_truncated_sentence(fragment: str, url: str) -> str:
     """Given the incomplete tail-fragment the feed cut off, fetch the
     source article and find that same sentence in the full text, then
     return it extended through its real ending -- just that one sentence,
-    not the rest of the article. Returns '' if it can't be found/completed,
-    so the caller can fall back gracefully."""
+    not the rest of the article.
+
+    Sentence-end detection skips false positives (decimal points like the
+    '.' in '1.1', however many appear) and keeps scanning until it finds
+    an actual sentence boundary, no matter how far into the article that
+    is. If the source text genuinely has no sentence-ending punctuation
+    at all after the fragment (rare, e.g. article cuts off or is oddly
+    formatted), this falls back to the end of the current paragraph
+    instead of giving up -- so a match is only ever discarded when the
+    fragment truly can't be located in the source at all.
+    """
     fragment = fragment.strip()
     if not fragment or not url:
         return ""
@@ -368,15 +437,35 @@ def complete_truncated_sentence(fragment: str, url: str) -> str:
     if idx == -1:
         return ""
 
-    end_idx = -1
-    for ch in SENTENCE_END_CHARS:
-        pos = full_text.find(ch, idx)
-        if pos != -1 and (end_idx == -1 or pos < end_idx):
-            end_idx = pos
+    end_idx = find_next_sentence_end(full_text, idx)
     if end_idx == -1:
-        return ""
+        # No real sentence-ending punctuation anywhere after the anchor --
+        # fall back to the end of this paragraph rather than dropping the
+        # match entirely.
+        para_break_idx = full_text.find(PARAGRAPH_BREAK, idx)
+        end_idx = (para_break_idx - 1) if para_break_idx != -1 else (len(full_text) - 1)
 
-    return full_text[idx : end_idx + 1].strip()
+    result = full_text[idx : end_idx + 1].strip()
+    # Paragraph-break markers only matter for locating boundaries; collapse
+    # any that ended up inside the returned slice back to plain spacing.
+    result = result.replace(PARAGRAPH_BREAK, " ")
+    return " ".join(result.split())
+
+
+def is_truncated_summary(summary: str) -> bool:
+    """True if the feed appears to have cut the summary off mid-sentence.
+    Most feeds signal this with a trailing '...'/'…', but some (like this
+    one) just stop abruptly with no marker at all -- e.g. ending on
+    'ستواصل' with no period. Treat *any* summary that doesn't end on a
+    real sentence-ending character as truncated, not just the ellipsis
+    case, so the completion logic below also catches the marker-less
+    truncations."""
+    s = summary.rstrip()
+    if not s:
+        return False
+    if s.endswith(("...", "…")):
+        return True
+    return s[-1] not in SENTENCE_END_CHARS
 
 
 def end_at_sentence_boundary(text: str) -> str:
@@ -388,9 +477,9 @@ def end_at_sentence_boundary(text: str) -> str:
     text = text.strip()
     if not text:
         return text
-    if text[-1] in SENTENCE_END_CHARS:
+    if text and _is_real_sentence_end(text, len(text) - 1) and text[-1] in SENTENCE_END_CHARS:
         return text
-    last_idx = max((text.rfind(ch) for ch in SENTENCE_END_CHARS), default=-1)
+    last_idx = find_last_sentence_end(text)
     if last_idx == -1:
         return text
     return text[: last_idx + 1].strip()
@@ -521,14 +610,15 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
 
     image_url = extract_image_url(entry)
 
-    # If the feed cut the summary off mid-sentence (ends in "..."), don't
+    # If the feed cut the summary off mid-sentence (whether it signals this
+    # with a trailing "..." or just stops abruptly with no marker), don't
     # shorten the rest of the summary to compensate -- instead, fetch the
     # source article, find that same cut-off sentence in the full text,
     # and complete JUST that one sentence. Everything the feed already
     # gave us stays exactly as-is. This all happens in the original
     # source language, before translation, so the whole thing gets
     # translated together as one coherent piece of text.
-    if summary.rstrip().endswith(("...", "…")):
+    if is_truncated_summary(summary):
         stripped = TRAILING_ELLIPSIS_RE.sub("", summary).strip()
         complete_part, fragment = split_complete_and_incomplete(stripped)
         completed_sentence = complete_truncated_sentence(fragment, link)
