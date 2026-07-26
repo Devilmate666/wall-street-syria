@@ -404,20 +404,62 @@ def _fetch_article_paragraph_text(url: str) -> str:
     return PARAGRAPH_BREAK.join(p for p in paragraphs if p)
 
 
+def _alnum_or_space(ch: str) -> bool:
+    return ch.isalnum() or ch.isspace()
+
+
+def _build_stripped_index(text: str) -> tuple[str, list[int]]:
+    """Return (stripped_text, index_map): stripped_text keeps only letters,
+    digits, and whitespace, and index_map[i] is stripped_text[i]'s real
+    position in the original `text`. Used so anchor-matching is immune to
+    punctuation/quote-style differences between the RSS feed's summary and
+    the live article page (e.g. straight quotes " vs curly “ ” vs
+    guillemets « », different dash characters, etc.) -- those are exactly
+    the kind of mismatch that silently breaks a plain substring search."""
+    chars: list[str] = []
+    index_map: list[int] = []
+    for i, ch in enumerate(text):
+        if _alnum_or_space(ch):
+            chars.append(ch)
+            index_map.append(i)
+    return "".join(chars), index_map
+
+
+def _find_anchor_index(full_text: str, anchor_source: str) -> int:
+    """Find where the start of `anchor_source` (the cut-off fragment)
+    appears in `full_text`, ignoring punctuation/quote-style differences.
+    Tries progressively shorter anchors so one late difference doesn't
+    sink an otherwise-good match. Returns the real index into the
+    ORIGINAL full_text, or -1 if nothing matches at all."""
+    stripped_full, index_map = _build_stripped_index(full_text)
+    for length in (60, 40, 20, 10):
+        anchor = anchor_source[:length].strip()
+        if len(anchor) < 8:
+            continue
+        stripped_anchor, _ = _build_stripped_index(anchor)
+        stripped_anchor = stripped_anchor.strip()
+        if not stripped_anchor:
+            continue
+        pos = stripped_full.find(stripped_anchor)
+        if pos != -1:
+            return index_map[pos]
+    return -1
+
+
 def complete_truncated_sentence(fragment: str, url: str) -> str:
     """Given the incomplete tail-fragment the feed cut off, fetch the
     source article and find that same sentence in the full text, then
     return it extended through its real ending -- just that one sentence,
     not the rest of the article.
 
-    Sentence-end detection skips false positives (decimal points like the
-    '.' in '1.1', however many appear) and keeps scanning until it finds
-    an actual sentence boundary, no matter how far into the article that
-    is. If the source text genuinely has no sentence-ending punctuation
-    at all after the fragment (rare, e.g. article cuts off or is oddly
-    formatted), this falls back to the end of the current paragraph
-    instead of giving up -- so a match is only ever discarded when the
-    fragment truly can't be located in the source at all.
+    Anchor matching ignores punctuation/quote-style differences between
+    the feed and the live page (see _find_anchor_index), and sentence-end
+    detection skips false positives (decimal points like the '.' in
+    '1.1', however many appear), scanning as far as needed to find the
+    real boundary. If the source text genuinely has no sentence-ending
+    punctuation at all after the fragment, this falls back to the end of
+    the current paragraph instead of giving up -- so a match is only ever
+    discarded when the fragment truly can't be located in the source.
     """
     fragment = fragment.strip()
     if not fragment or not url:
@@ -427,13 +469,7 @@ def complete_truncated_sentence(fragment: str, url: str) -> str:
     if not full_text:
         return ""
 
-    # Anchor on the start of the fragment -- long enough to be a reliable
-    # match, short enough to tolerate minor whitespace/formatting drift.
-    anchor = fragment[:40].strip()
-    idx = full_text.find(anchor)
-    if idx == -1 and len(fragment) > 20:
-        anchor = fragment[:20].strip()
-        idx = full_text.find(anchor)
+    idx = _find_anchor_index(full_text, fragment)
     if idx == -1:
         return ""
 
@@ -595,14 +631,24 @@ def extract_image_url(entry) -> str:
     return ""
 
 
-def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
-    """Returns (message_text, image_url, title_ar, summary_ar_telegram).
+def build_message(feed_name: str, entry) -> tuple[str, str, str, str, bool]:
+    """Returns (message_text, image_url, title_ar, summary_ar_telegram,
+    still_incomplete).
 
     summary_ar_telegram is the exact same (Telegram-length-trimmed) text
     that gets posted to the channel, so the website's news ticker always
     shows precisely what viewers see on Telegram -- no separate "fuller"
     version, no extra fetching, nothing that could look inconsistent
     between the two.
+
+    still_incomplete is True when the feed's summary was cut off
+    mid-sentence and the completion attempt could NOT locate/complete it
+    (article fetch failed, or the fragment genuinely isn't findable in
+    the live page). Callers should treat this as "not ready to send yet"
+    and retry on a later pass rather than post the broken half-sentence --
+    the live article is often simply not indexed/reachable for the first
+    few minutes after publish, so a later retry frequently succeeds where
+    an immediate attempt wouldn't.
     """
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
@@ -629,8 +675,10 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
             # the sentences the feed fully gave us, dropping the fragment.
             summary = complete_part
         # else: no earlier complete sentence and no successful completion --
-        # leave `summary` as the original (still ellipsis-ending) text
-        # rather than discarding it entirely.
+        # leave `summary` as the original (still-truncated) text; the
+        # still_incomplete flag below will tell the caller not to send it.
+
+    still_incomplete = is_truncated_summary(summary)
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
@@ -652,7 +700,7 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     parts = [f"{emoji} {escape_markdown_v2(title_ar)}"]
     if summary_ar_telegram and summary_ar_telegram != title_ar:
         parts.append(escape_markdown_v2(summary_ar_telegram))
-    return "\n\n".join(parts), image_url, title_ar, summary_ar_telegram
+    return "\n\n".join(parts), image_url, title_ar, summary_ar_telegram, still_incomplete
 
 
 def fetch_feed(name: str, url: str):
@@ -859,30 +907,46 @@ def run_one_pass(state: dict) -> int:
                     newly_seen_ids.extend(eid for eid, _ in candidates[:-1])
 
                 latest_eid, latest_entry = candidates[-1]
-                message, image_url, title_ar, summary_ar_telegram = build_message(name, latest_entry)
-                ok = send_post(message, image_url)
+                message, image_url, title_ar, summary_ar_telegram, still_incomplete = build_message(name, latest_entry)
 
-                if ok:
-                    newly_seen_ids.append(latest_eid)
-                    newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
-                    newly_seen_links.append(normalize_link(latest_entry.get("link", "")))
-                    sent_this_feed += 1
-                    total_sent += 1
-                    print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
-
-                    append_news_item({
-                        "id": latest_eid,
-                        "title": title_ar,
-                        "description": summary_ar_telegram,
-                        "link": latest_entry.get("link", ""),
-                        "image": image_url,
-                        "source": name,
-                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    })
+                if still_incomplete:
+                    # The feed cut this summary off mid-sentence and we
+                    # couldn't fetch/match the source article to complete
+                    # it yet (often because the live page isn't reachable
+                    # or fully published within the first few minutes).
+                    # Don't mark it seen and don't send it broken --
+                    # leave it as a candidate so the next pass (5 min
+                    # later) tries again, by which point the article is
+                    # usually available. (Not a bare `continue`: the
+                    # older-discarded candidates above still need their
+                    # seen-state saved below, for this feed.)
+                    print(f"  ~ summary still cut off, couldn't complete from source yet -- "
+                          f"skipping for now, will retry next pass: "
+                          f"{clean_text(latest_entry.get('title', ''))[:80]}")
                 else:
-                    print("  ~ send failed, will retry this one next pass")
+                    ok = send_post(message, image_url)
 
-                time.sleep(SEND_DELAY_SECONDS)
+                    if ok:
+                        newly_seen_ids.append(latest_eid)
+                        newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
+                        newly_seen_links.append(normalize_link(latest_entry.get("link", "")))
+                        sent_this_feed += 1
+                        total_sent += 1
+                        print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
+
+                        append_news_item({
+                            "id": latest_eid,
+                            "title": title_ar,
+                            "description": summary_ar_telegram,
+                            "link": latest_entry.get("link", ""),
+                            "image": image_url,
+                            "source": name,
+                            "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        })
+                    else:
+                        print("  ~ send failed, will retry this one next pass")
+
+                    time.sleep(SEND_DELAY_SECONDS)
 
         if BASELINE_ONLY and newly_seen_ids:
             print(f"  ~ Marked {len(newly_seen_ids)} existing item(s) as seen (no messages sent).")
@@ -950,7 +1014,7 @@ def run_backfill_news() -> None:
 
     items = []
     for _, name, entry in top:
-        _, image_url, title_ar, summary_ar_telegram = build_message(name, entry)
+        _, image_url, title_ar, summary_ar_telegram, _ = build_message(name, entry)
         items.append({
             "id": entry_id(entry),
             "title": title_ar,
