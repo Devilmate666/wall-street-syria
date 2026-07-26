@@ -109,10 +109,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 # read-only proxy that fetches the URL server-side from a different IP.
 PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
 
-# Timeout for fetching a source article page, used only to complete the
-# one sentence a feed cut off with "..." -- not for scraping full articles.
-ARTICLE_FETCH_TIMEOUT_SECONDS = 15
-
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -214,10 +210,28 @@ def normalize_title(title: str) -> str:
     return text
 
 
+def normalize_link(link: str) -> str:
+    """Collapse a URL down to a stable comparison key: scheme+host+path
+    only, no query string/fragment/trailing slash/www., and lowercased.
+    Used as a second backstop dedup check -- this is what catches the
+    actual bug pattern where a bundle feed (like rss.app) re-lists the
+    exact same story a few minutes later under a new internal entry id
+    and/or a link with different tracking parameters, which both the id
+    check and the title check can miss if the id rotated AND the title
+    got reworded slightly at the same time."""
+    if not link:
+        return ""
+    link = link.strip().lower()
+    link = re.sub(r"^https?://(www\.)?", "", link)
+    link = link.split("?", 1)[0].split("#", 1)[0]
+    return link.rstrip("/")
+
+
 def entry_id(entry) -> str:
     """Build a stable unique id for an RSS entry."""
     raw = entry.get("id") or entry.get("link") or entry.get("title", "")
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 
 HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -268,51 +282,37 @@ def clean_text(text: str) -> str:
 SENTENCE_END_CHARS = ".!?؟。"
 TRAILING_ELLIPSIS_RE = re.compile(r"(\.\.\.|…)\s*$")
 
+# Some sites block requests from cloud/datacenter IPs (like GitHub Actions
+# runners) even with browser-like headers. If a direct fetch gets blocked,
+# retry once through a public read-only proxy that fetches server-side
+# from a different IP.
+PROXY_FETCH_URL_TEMPLATE = "https://api.allorigins.win/raw?url={encoded_url}"
+ARTICLE_FETCH_TIMEOUT_SECONDS = 15
 
-def ends_with_ellipsis(text: str) -> bool:
-    return bool(text) and bool(TRAILING_ELLIPSIS_RE.search(text.strip()))
 
-
-def split_complete_and_partial(text: str) -> tuple[str, str]:
-    """Split feed text into (complete_sentences, partial_tail). The
-    partial_tail is whatever trails the last real sentence-ending
-    punctuation, after stripping a trailing '...' -- i.e. the incomplete
-    fragment a feed leaves behind when it truncates a summary."""
+def split_complete_and_incomplete(text: str) -> tuple[str, str]:
+    """Given text that ends in an ellipsis (already stripped of the literal
+    '...'), split it into:
+      - complete: everything up through the last real sentence boundary,
+        left completely untouched
+      - fragment: whatever incomplete text comes after that boundary --
+        the part that got cut off mid-sentence
+    If there's no sentence boundary at all, complete is "" and the whole
+    text is treated as one incomplete fragment."""
     text = text.strip()
     if not text:
         return "", ""
-
-    text = TRAILING_ELLIPSIS_RE.sub("", text).strip()
-    if not text:
-        return "", ""
-
-    if text[-1] in SENTENCE_END_CHARS:
-        return text, ""
-
     last_idx = max((text.rfind(ch) for ch in SENTENCE_END_CHARS), default=-1)
     if last_idx == -1:
-        return "", text  # no complete sentence at all, it's all a fragment
-
-    return text[: last_idx + 1].strip(), text[last_idx + 1:].strip()
-
-
-def end_at_sentence_boundary(text: str) -> str:
-    """Fallback safety net: if text doesn't end on real sentence-ending
-    punctuation (e.g. after a hard length cut for Telegram), trim back to
-    the last one found rather than leaving it mid-word. Used only as a
-    last resort -- the normal path is completing the sentence from the
-    source article instead of dropping it (see complete_teaser_summary)."""
-    complete, _partial = split_complete_and_partial(text)
-    return complete if complete else text.strip()
+        return "", text
+    return text[: last_idx + 1].strip(), text[last_idx + 1 :].strip()
 
 
-def fetch_raw_article_text(url: str) -> str:
-    """Fetch the source article page and return its cleaned paragraph text,
-    untranslated, for locating where a truncated feed sentence continues.
-    Returns '' on any failure -- callers must handle that gracefully."""
+def _fetch_article_paragraph_text(url: str) -> str:
+    """Fetch the source article page and return its full paragraph text
+    (joined, cleaned), or '' if the fetch/parse fails for any reason."""
     if not url:
         return ""
-
     resp = None
     try:
         resp = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT_SECONDS)
@@ -341,67 +341,59 @@ def fetch_raw_article_text(url: str) -> str:
     article_tag = soup.find("article")
     container = article_tag if article_tag is not None else soup
     paragraphs = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    return " ".join(p for p in paragraphs if p)
+    return clean_text(" ".join(p for p in paragraphs if p))
 
 
-def complete_partial_sentence(fragment: str, article_text: str) -> str:
-    """Find where `fragment` (the feed's incomplete tail) appears in the
-    full article text, and return that same sentence in full. Returns ''
-    if no confident match is found, so the caller can fall back safely."""
-    if not fragment or not article_text:
+def complete_truncated_sentence(fragment: str, url: str) -> str:
+    """Given the incomplete tail-fragment the feed cut off, fetch the
+    source article and find that same sentence in the full text, then
+    return it extended through its real ending -- just that one sentence,
+    not the rest of the article. Returns '' if it can't be found/completed,
+    so the caller can fall back gracefully."""
+    fragment = fragment.strip()
+    if not fragment or not url:
         return ""
 
-    frag_words = fragment.split()
-    # Anchor on the first several words -- more robust than matching the
-    # whole fragment verbatim, since minor whitespace/formatting can
-    # differ between the feed's teaser and the live page.
-    anchor = " ".join(frag_words[:8])
-    if len(anchor) < 8:
+    full_text = _fetch_article_paragraph_text(url)
+    if not full_text:
         return ""
 
-    idx = article_text.lower().find(anchor.lower())
+    # Anchor on the start of the fragment -- long enough to be a reliable
+    # match, short enough to tolerate minor whitespace/formatting drift.
+    anchor = fragment[:40].strip()
+    idx = full_text.find(anchor)
+    if idx == -1 and len(fragment) > 20:
+        anchor = fragment[:20].strip()
+        idx = full_text.find(anchor)
     if idx == -1:
         return ""
 
     end_idx = -1
-    for i in range(idx, len(article_text)):
-        if article_text[i] in SENTENCE_END_CHARS:
-            end_idx = i
-            break
+    for ch in SENTENCE_END_CHARS:
+        pos = full_text.find(ch, idx)
+        if pos != -1 and (end_idx == -1 or pos < end_idx):
+            end_idx = pos
     if end_idx == -1:
         return ""
 
-    completed = article_text[idx: end_idx + 1].strip()
-    # Sanity check: the completed sentence should be at least as long as
-    # the fragment we already had -- otherwise something's off.
-    if len(completed) < len(fragment.strip()):
-        return ""
-    return completed
+    return full_text[idx : end_idx + 1].strip()
 
 
-def complete_teaser_summary(summary: str, link: str) -> str:
-    """If `summary` was cut off with '...', keep every complete sentence
-    exactly as the feed gave it, and complete only the one sentence that
-    got cut off -- by fetching the source article and finding where that
-    sentence continues. Nothing beyond that one sentence is ever added.
-    Falls back to just dropping the incomplete tail if the source can't
-    be fetched or the fragment can't be confidently located."""
-    if not ends_with_ellipsis(summary):
-        return summary
-
-    complete_part, partial_fragment = split_complete_and_partial(summary)
-    if not partial_fragment:
-        return complete_part
-
-    article_text = fetch_raw_article_text(link)
-    completed_sentence = complete_partial_sentence(partial_fragment, article_text)
-
-    if completed_sentence:
-        return f"{complete_part} {completed_sentence}".strip() if complete_part else completed_sentence
-
-    # Couldn't safely complete it -- drop the incomplete tail rather than
-    # showing a fetch failure or a sentence cut off mid-word.
-    return complete_part
+def end_at_sentence_boundary(text: str) -> str:
+    """Trim text back to the last complete sentence instead of leaving it
+    cut off mid-word. Used only for the Telegram-length-cap case (a long,
+    already-complete summary that's simply too long for Telegram) -- not
+    for the feed's own '...' truncation, which is handled separately by
+    complete_truncated_sentence() so nothing gets needlessly shortened."""
+    text = text.strip()
+    if not text:
+        return text
+    if text[-1] in SENTENCE_END_CHARS:
+        return text
+    last_idx = max((text.rfind(ch) for ch in SENTENCE_END_CHARS), default=-1)
+    if last_idx == -1:
+        return text
+    return text[: last_idx + 1].strip()
 
 
 def is_mostly_arabic(text: str) -> bool:
@@ -525,22 +517,33 @@ def build_message(feed_name: str, entry) -> tuple[str, str, str, str]:
     """
     title = clean_text(entry.get("title", "(no title)"))
     summary = clean_text(entry.get("summary", ""))
-
-    image_url = extract_image_url(entry)
     link = entry.get("link", "")
 
-    # If the feed cut the summary off with "...", complete just that one
-    # sentence from the source article -- every other sentence the feed
-    # already gave us is kept exactly as-is, untouched. This happens on
-    # the raw (pre-translation) text so the source-page match is reliable.
-    summary = complete_teaser_summary(summary, link)
+    image_url = extract_image_url(entry)
+
+    # If the feed cut the summary off mid-sentence (ends in "..."), don't
+    # shorten the rest of the summary to compensate -- instead, fetch the
+    # source article, find that same cut-off sentence in the full text,
+    # and complete JUST that one sentence. Everything the feed already
+    # gave us stays exactly as-is. This all happens in the original
+    # source language, before translation, so the whole thing gets
+    # translated together as one coherent piece of text.
+    if summary.rstrip().endswith(("...", "…")):
+        stripped = TRAILING_ELLIPSIS_RE.sub("", summary).strip()
+        complete_part, fragment = split_complete_and_incomplete(stripped)
+        completed_sentence = complete_truncated_sentence(fragment, link)
+        if completed_sentence:
+            summary = f"{complete_part} {completed_sentence}".strip() if complete_part else completed_sentence
+        elif complete_part:
+            # Couldn't fetch/match the source -- fall back to keeping only
+            # the sentences the feed fully gave us, dropping the fragment.
+            summary = complete_part
+        # else: no earlier complete sentence and no successful completion --
+        # leave `summary` as the original (still ellipsis-ending) text
+        # rather than discarding it entirely.
 
     title_ar = to_arabic(title)
     summary_ar_full = to_arabic(summary) if summary else ""
-    # Safety net only: if something still ends mid-sentence (e.g. no "..."
-    # was present but the source itself was malformed), trim back to the
-    # last real sentence boundary rather than showing a dangling clause.
-    summary_ar_full = end_at_sentence_boundary(summary_ar_full)
 
     # Telegram photo captions cap at 1024 chars, plain text messages at 4096.
     # Leave headroom for the emoji/title/markdown-escaping overhead, but
@@ -700,9 +703,11 @@ def run_one_pass(state: dict) -> int:
 
         seen_ids = set(state.get(url, []))
         seen_titles = set(state.get(url + "::titles", []))
+        seen_links = set(state.get(url + "::links", []))
         is_new_feed = url not in state
         newly_seen_ids = []     # items to mark seen: skipped-by-filter, baseline, AND successful sends
         newly_seen_titles = []  # normalized titles of anything actually sent, for the dedup backstop
+        newly_seen_links = []   # normalized links of anything actually sent, for the dedup backstop
         sent_this_feed = 0
 
         if is_new_feed and not BASELINE_ONLY:
@@ -718,6 +723,7 @@ def run_one_pass(state: dict) -> int:
                 if eid not in seen_ids:
                     newly_seen_ids.append(eid)
                     newly_seen_titles.append(normalize_title(clean_text(entry.get("title", ""))))
+                    newly_seen_links.append(normalize_link(entry.get("link", "")))
         else:
             # Collect every entry that's genuinely new (and passes the topic
             # filter, if any) -- but only ever SEND the most recent one.
@@ -736,12 +742,18 @@ def run_one_pass(state: dict) -> int:
                         newly_seen_ids.append(eid)  # mark seen, skip silently
                         continue
 
-                # Backstop dedup: same normalized title already sent
-                # recently (e.g. the same article re-fetched with a
-                # rotated id/link around a job restart) -- mark seen,
-                # don't send it again.
-                norm = normalize_title(clean_text(entry.get("title", "")))
-                if norm and norm in seen_titles:
+                # Backstop dedup: same normalized title OR same underlying
+                # article link already sent recently (e.g. the bundle feed
+                # re-lists the same story a few minutes later under a new
+                # entry id, sometimes with a slightly reworded title too --
+                # the link rarely changes for the same real story, so this
+                # catches what the title check alone can miss).
+                norm_title = normalize_title(clean_text(entry.get("title", "")))
+                norm_link = normalize_link(entry.get("link", ""))
+                if norm_title and norm_title in seen_titles:
+                    newly_seen_ids.append(eid)
+                    continue
+                if norm_link and norm_link in seen_links:
                     newly_seen_ids.append(eid)
                     continue
 
@@ -763,6 +775,7 @@ def run_one_pass(state: dict) -> int:
                 if ok:
                     newly_seen_ids.append(latest_eid)
                     newly_seen_titles.append(normalize_title(clean_text(latest_entry.get("title", ""))))
+                    newly_seen_links.append(normalize_link(latest_entry.get("link", "")))
                     sent_this_feed += 1
                     total_sent += 1
                     print(f"  -> sent: {clean_text(latest_entry.get('title', ''))[:80]}")
@@ -792,6 +805,10 @@ def run_one_pass(state: dict) -> int:
         if newly_seen_titles:
             updated_titles = list(seen_titles.union(t for t in newly_seen_titles if t))
             state[url + "::titles"] = updated_titles[-MAX_SEEN_PER_FEED:]
+
+        if newly_seen_links:
+            updated_links = list(seen_links.union(l for l in newly_seen_links if l))
+            state[url + "::links"] = updated_links[-MAX_SEEN_PER_FEED:]
 
     return total_sent
 
