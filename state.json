@@ -409,7 +409,6 @@
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
     "429a7a6afe255b659a1f5d2a7c8d5e44f714419123e77c6ec9f869a7ed46d90e",
-    "70349cd4523b748369ee5f71a6a485ae15f26c9e1c10f65adb930bb64fb40f2d",
     "32fe4d8d9fca696362840cc637de69bb2a051a36e220f414d249e1522642e549",
     "6f5980ff3bf2ad417137f4fe6361ab0953278ec75f86f8dfeb60ca5fd7b7bd34",
     "4cdc4efed38f79beb5a176e61dbc338851f2ef8ea88c7fc7511c461ca4873065",
@@ -420,8 +419,9 @@
     "5040218c626b80b0fb93f04b65615979a65be3b306144d68b14f950a80307404",
     "5faa9a62c9660b2144614c1dedff5c343e5c7f26481660dda90fcd94579634c7",
     "3cccaa4d906dd2d2e012db7c981349773b0b73b5d33dfa8322a3c02a03b6aacb",
-    "37900cf9f70c3cc3e1ec7eaf04ad7dd1df374d38775b0c9683d6d4dc3215b17e",
     "971f762c3f4fad91d4537b9b911c2ac55c81e91500d32e5280e599aee1060ccb",
+    "37900cf9f70c3cc3e1ec7eaf04ad7dd1df374d38775b0c9683d6d4dc3215b17e",
+    "7d2e52b03dda40f7c98c6184d0e79e4becf9d83a724a2c759dcccbef071d8793",
     "8d9721d09b05a67564e10920c1b038f0db1233be09b4195d143b282896526bc7",
     "1563a6297c67f6742191795da15fae27ffdad5e8c6e7e6027f222d93f914b4fc",
     "85a352fe68295369772c87aab7cb33a77dafd53c274ecccca46490cbe7db482a",
@@ -740,6 +740,7 @@
     "الفرنكالسويسرييضعفمعدعمالعزوفعنالمخاطرةللدولارالأمريكي",
     "trumpsaysiranwillbeheldresponsibleforfuturehouthiattacks",
     "trumpauthorizesuseofaifordefensesupplychainmapping",
+    "withbombingcampaignunlikelytochangeiranspostureaccordingtousinteltrumpfaceslimitedoptions",
     "iranthreatensresponsetoukraineattackonitsshipincaspiansea",
     "بنكإنجلتراموقفالترقبوالانتظارمستمر",
     "apunchinthegutparentsconfrontcobbschoolboardovertrumpvisit",
@@ -774,9 +775,8 @@
     "توقعاتسعرمؤشرالدولارالأمريكييحافظعلىالتحيزالصعوديقائمًافوق10100",
     "forextodayusdollarrisesasstronglabordataandmiddleeasttensionsliftoil",
     "trumpcondemnsviolenceslamspressatwhitehousecorrespondentsdinner",
-    "trumpvowstoinvestigateeuoverfiningofustechcompanies",
-    "middleeasttensionsescalateecbdecisioninfocus",
     "argentinasrenaissancecontinues",
+    "middleeasttensionsescalateecbdecisioninfocus",
     "secretservicewarnsthreatleveloffthechartsasusgovernmentofficialstargetedin10000cases",
     "thetrumptradeisturningintoaloserinthestockmarket",
     "بنكاليابانالتشديدالتدريجيوالصدماتالخارجية",
@@ -870,13 +870,15 @@
     "swissmarketendsonfirmnote",
     "southkoreagdpgains06inq2",
     "singaporestockmarketmayrunoutofsteamonthursday",
+    "euroseptemberhikeoutlookofferssupportagainstusdollar",
     "الجنيهالإسترلينيتداولاتثقيلةمعتوقعتعديلبنكإنجلترا",
     "توقعاتالإسترلينيوالنفطأبرزصفقتينللمراقبةهذاالأسبوع",
     "straitofhormuztrumpthreatenstotargetiransbridgesandpowerplantsifattacksonshippersist",
-    "withbombingcampaignunlikelytochangeiranspostureaccordingtousinteltrumpfaceslimitedoptions"
+    "trumpvowstoinvestigateeuoverfiningofustechcompanies"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::links": [
     "alhadath.net/2026/07/26/%d9%83%d9%88%d8%a7%d9%84%d9%8a%d8%b3-%d9%88%d9%82%d9%81-%d8%a7%d9%84%d9%87%d8%ac%d9%85%d8%a7%d8%aa-%d8%b9%d9%84%d9%89-%d8%a7%d9%8a%d8%b1%d8%a7%d9%86-%d9%88%d8%aa%d9%88%d8%b5%d9%8a%d8%a9-%d9%82%d8%a7%d8%a6%d8%af-%d8%b3%d9%86%d8%aa%d9%83%d9%88%d9%85-%d9%84%d8%aa%d8%b1%d8%a7%d9%85%d8%a8",
-    "fxstreet.com/news/eur-jpy-price-forecast-holds-gains-around-18650-within-rising-wedge-202607270508"
+    "fxstreet.com/news/eur-jpy-price-forecast-holds-gains-around-18650-within-rising-wedge-202607270508",
+    "fxstreet.com/news/euro-september-hike-outlook-offers-support-against-us-dollar-uob-202607270613"
   ]
 }
