@@ -408,7 +408,6 @@
     "aa29c2d636573768445521fcde4380bf738557afc6fc384dd1c825d4dcb5aaec"
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml": [
-    "d38c45c5dd4df04e11b327de1bd69fe0e649cc5e79807a4caf11f0b487ea7229",
     "3bcfb94b8800eac6ff052b92f5f3df6fe04e751899384f805203c5a15251fce4",
     "5323b6c3410d9a7537490292a6f0d37d67a5c8b27431a94bca675d69fe873c90",
     "1a402bc2d09202f30e6ed9a86dc2f182040b6ea75b3ec54819e51a6c20890149",
@@ -420,8 +419,8 @@
     "98c581080746e6dc78f2c30bcdc0d7068532d5e5df348489e067b2e9a66f8b12",
     "79b8656148b83d2ce73add37026b89110e20b50d6408484a495a276b8bddfe03",
     "36032bc37a2c4c48a7cd7cfb215101e573ae3f37dca5a495152228cf7949b9cd",
-    "9c59e247730e189bf05eb0d1d870af1287c1edbde6085fe1a31cc6172e17fbc5",
     "92c09e84f6d09c2021dc2a98e2e659663e372c7c861f9e46f2cb72871375a31b",
+    "9c59e247730e189bf05eb0d1d870af1287c1edbde6085fe1a31cc6172e17fbc5",
     "ae73c7ae0704b1868122d077db63a3873a9b89ea2124fa5c895fda631a410f25",
     "492a38aa12ea593541899934f516aea9e2c6b75e13b8971f52e0e7bc12359417",
     "f4240c50a53d0659847cda4af5116b310844547434c3c57acf29c37549968e90",
@@ -447,8 +446,8 @@
     "9d27f15d9d838b1270d8ea233934c835b6602d535ab5439dbf4d81c6999f9a7f",
     "44a430e63a39c4b8b7329f70a6e70a750695837d331f5e6bb7fd4e9e2d503cbb",
     "b5324192a38fc9e372ac0c445108acc7dd1e321d1d3b5d599524f3715a1eb8cb",
-    "b1382a527598db11cb1672899b5de7ea3f4d7ffe37df7dca00843d6b5d376c38",
     "f2f2b48e306aa48ebb125d6540164928fee7c3d5981c0254b1cb78e199ddca3d",
+    "b1382a527598db11cb1672899b5de7ea3f4d7ffe37df7dca00843d6b5d376c38",
     "f41216df1c02065f7b8cc6f35fd98521c11ef903386aaa8b7a7a0a4f82004d1e",
     "6f652456a54c3ef16d9e46baf88840fc3512fd17125a561ea8e5e9f5d8e65c92",
     "7cec6e7d6ff721513b571d85726d3169686b4786c45d53b20a4e7bee8a2069dd",
@@ -686,6 +685,7 @@
     "6597c01df0ed269c1668a6bb52a4aa24abdb972897972701cb767182c1294237",
     "cce653c929075846e28119586954976ea324e18275633b7a07a6e2b456585e8d",
     "4cdc4efed38f79beb5a176e61dbc338851f2ef8ea88c7fc7511c461ca4873065",
+    "6039fe1bfae87fb75ca3eff8560a880c60c1527a32ccd601d77273664cdaa381",
     "42625a055e6044c0d53a562d28c7a06e1f294758f6164b2212a80f4730d27501",
     "cf759501ae07366c2b71e0d5704ff7f007b5553e9e837aecbc3496043ed3d702",
     "4714c3e6497c95f08328dbd1c19657eaf4adb29b8ba9a71189e9830a69b06cfd",
@@ -741,9 +741,9 @@
     "hereswhat2600americanssaidabouttrumpsballroompoolandarchprojects",
     "instantaccesstotrumpsthoughtsnowcosts100000",
     "trumpfacesbacklashforusingpalestinianasaninsult",
+    "trumpscoffsataffordabilityashetoutseconomicpoliciesatgeorgiarally",
     "توقعاتسعرخامغربتكساسالوسيطالتوتراتفيالشرقالأوسطتدفعالنفطإلىالارتفاعمعاختبارالثيرانالمتوسطالمتحركالبسيطsma100يوم",
     "dollarandyieldsurgeasbrentnear100sparksbroadermarketrepricing",
-    "trumpscoffsataffordabilityashetoutseconomicpoliciesatgeorgiarally",
     "watchlivetrumppicktoleadcfpbfacessenateconfirmationhearing",
     "اليناليابانييواجهصعوبةبالقربمنأدنىمستوىلهفيأربعةعقودمقابلالدولارالأمريكي",
     "opinionthenewtactictrumpthinkswillrallyvoters",
@@ -806,6 +806,7 @@
     "kalshiaccusesnetflixofmisleadingviewersinnewpredictionmarketdocumentary",
     "الجنيهالإسترلينيتداولاتثقيلةمعتوقعتعديلبنكإنجلترا",
     "eurjpypriceforecastholdsgainsaround18650withinrisingwedge",
+    "gbpusdpriceforecastvcpbreakoutlikelyafterfedboepolicyannouncements",
     "dowfuturesbreakhigherearningscoolingyieldsfuelrallytowardhighs",
     "straitofhormuztrumpthreatenstotargetiransbridgesandpowerplantsifattacksonshippersist",
     "forcedlabourrationalefortrumptariffsmetwithbewilderment",
@@ -879,8 +880,9 @@
   ],
   "https://rss.app/feeds/_c5P6nJZM3e6ZSbyE.xml::links": [
     "fxstreet.com/news/ecbs-zigman-central-bank-is-committed-to-ensure-inflation-stable-around-2-202607270717",
+    "fxstreet.com/news/eur-jpy-price-forecast-holds-gains-around-18650-within-rising-wedge-202607270508",
+    "fxstreet.com/news/gbp-usd-price-forecast-vcp-breakout-likely-after-fed-boe-policy-announcements-202607270810",
     "fxstreet.com/news/euro-september-hike-outlook-offers-support-against-us-dollar-uob-202607270613",
-    "alhadath.net/2026/07/26/%d9%83%d9%88%d8%a7%d9%84%d9%8a%d8%b3-%d9%88%d9%82%d9%81-%d8%a7%d9%84%d9%87%d8%ac%d9%85%d8%a7%d8%aa-%d8%b9%d9%84%d9%89-%d8%a7%d9%8a%d8%b1%d8%a7%d9%86-%d9%88%d8%aa%d9%88%d8%b5%d9%8a%d8%a9-%d9%82%d8%a7%d8%a6%d8%af-%d8%b3%d9%86%d8%aa%d9%83%d9%88%d9%85-%d9%84%d8%aa%d8%b1%d8%a7%d9%85%d8%a8",
-    "fxstreet.com/news/eur-jpy-price-forecast-holds-gains-around-18650-within-rising-wedge-202607270508"
+    "alhadath.net/2026/07/26/%d9%83%d9%88%d8%a7%d9%84%d9%8a%d8%b3-%d9%88%d9%82%d9%81-%d8%a7%d9%84%d9%87%d8%ac%d9%85%d8%a7%d8%aa-%d8%b9%d9%84%d9%89-%d8%a7%d9%8a%d8%b1%d8%a7%d9%86-%d9%88%d8%aa%d9%88%d8%b5%d9%8a%d8%a9-%d9%82%d8%a7%d8%a6%d8%af-%d8%b3%d9%86%d8%aa%d9%83%d9%88%d9%85-%d9%84%d8%aa%d8%b1%d8%a7%d9%85%d8%a8"
   ]
 }
