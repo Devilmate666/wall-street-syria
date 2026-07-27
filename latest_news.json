@@ -1,5 +1,14 @@
 [
   {
+    "id": "3d6fd958d1d4dfff1a91adae75845fb008df1a0e0d9c8fe5f5b517479eff8103",
+    "title": "الاحتياطي الفيدرالي: توقف مؤقت ممتد ولكن مخاطر رفع الفائدة ترتفع",
+    "description": "يتوقع استراتيجيو UOB أن يبقي الاحتياطي الفيدرالي (الاحتياطي الفيدرالي) على سعر الفائدة المستهدف لأموال الاحتياطي الفيدرالي عند 3.50% - 3.75% في اجتماع اللجنة الفيدرالية للسوق المفتوحة (FOMC) في يوليو ويحافظ على الحالة الأساسية للتوقف المؤقت الممتد حتى عام 2026، مع التخفيف فقط في الربع الثاني والربع الرابع من عام 2027 بمجرد أن يتلاشى التضخم المؤقت.",
+    "link": "https://www.fxstreet.com/news/federal-reserve-extended-pause-but-hike-risk-rising-uob-202607271218",
+    "image": "https://editorial.fxsstatic.com/images/i/Federal-Reserve-Building_2.png",
+    "source": "Forex Bundle",
+    "sent_at": "2026-07-27T12:24:53Z"
+  },
+  {
     "id": "0bf31489b763d2003cce0fcfde34e057415fec589c615342555b6032aba7f46d",
     "title": "اليورو: تشير الشكوك حول النمو والسياسة إلى انخفاض مقابل الدولار الأمريكي",
     "description": "يرى الاستراتيجيون في بنك HSBC أن زوج يورو/دولار EUR/USD معرض لخطر الانخفاض حيث يحافظ البنك المركزي الأوروبي (ECB) على موقف حذر يعتمد على البيانات ويمتنع عن الإشارة إلى المزيد من رفع أسعار الفائدة.",
@@ -34,14 +43,5 @@
     "image": "https://static.mfbcdn.net/images/news/52182/desktop.webp",
     "source": "Forex Bundle",
     "sent_at": "2026-07-27T10:09:27Z"
-  },
-  {
-    "id": "c66586604164b564a0f1d4bef1dc1563298d1dab54ea6ad53af0ad1decdbaf3a",
-    "title": "توقعات أسعار الفضة: يرتفع XAG/USD بالقرب من 60 دولارًا مع احتضان الأسواق لتهدئة التصعيد بين الولايات المتحدة وإيران",
-    "description": "ارتفعت الفضة (XAG/USD) يوم الاثنين ويتم تداولها حول 59.45 دولارًا في وقت كتابة هذا التقرير، مرتفعة بنسبة 2.27٪ خلال اليوم.",
-    "link": "https://www.fxstreet.com/news/silver-price-forecast-xag-usd-rallies-near-60-as-markets-embrace-us-iran-de-escalation-202607270918",
-    "image": "https://editorial.fxsstatic.com/images/i/Silver5.png",
-    "source": "Forex Bundle",
-    "sent_at": "2026-07-27T09:24:21Z"
   }
 ]
