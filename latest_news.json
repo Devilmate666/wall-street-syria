@@ -1,5 +1,14 @@
 [
   {
+    "id": "f417247abf5abc2480961ec299e7b0c89b54a043d96a34aa4e751bc8c583ac5b",
+    "title": "الأسهم الآسيوية ترتفع مع تراجع التوترات بين الولايات المتحدة وإيران",
+    "description": "ارتفعت الأسهم الآسيوية يوم الاثنين مع تراجع أسعار النفط وسط آمال الهدنة بين الولايات المتحدة وإيران، مما ساعد على تخفيف التضخم ومخاوف أسعار الفائدة قبل الاجتماعات الحاسمة لمجلس الاحتياطي الفيدرالي وبنك إنجلترا وبنك اليابان المركزي المقرر عقدها هذا الأسبوع.",
+    "link": "https://www.myfxbook.com/news/asian-shares-climb-as-us-iran-tensions-ease/52176",
+    "image": "https://static.mfbcdn.net/images/news/52176/desktop.webp",
+    "source": "Forex Bundle",
+    "sent_at": "2026-07-27T09:09:17Z"
+  },
+  {
     "id": "6039fe1bfae87fb75ca3eff8560a880c60c1527a32ccd601d77273664cdaa381",
     "title": "توقعات سعر زوج إسترليني/دولار GBP/USD: من المحتمل أن يخترق VCP بعد إعلانات سياسة بنك الاحتياطي الفيدرالي وبنك إنجلترا",
     "description": "ارتفع الجنيه الاسترليني بنسبة 0.15٪ ليقترب من 1.3345 مقابل الدولار الأمريكي خلال جلسة التداول الأوروبية يوم الاثنين.",
@@ -34,14 +43,5 @@
     "image": "https://editorial.fxsstatic.com/images/i/AVAX-bullish-line-1.png",
     "source": "Forex Bundle",
     "sent_at": "2026-07-27T05:56:15Z"
-  },
-  {
-    "id": "ba8c5b5648ce307edc9922addb28867fb74bfbc0547500ea568e9048c13ef91b",
-    "title": "عدد ضحايا الحرب الإيرانية يتجاوز 600 بينما يغير البنتاغون الحسابات بهدوء",
-    "description": "قام البنتاغون بتحديث قاعدة بياناته لضحايا الحرب يوم السبت، مسجلاً أكثر من 140 جريحًا جديدًا واستعادة الجنود الأربعة الذين قتلوا بسبب الضربات الإيرانية نهاية الأسبوع الماضي.",
-    "link": "https://www.cnn.com/2026/07/26/politics/iran-war-casualties",
-    "image": "https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2287213640.jpg?c=16x9&q=w_800,c_fill",
-    "source": "Forex Bundle",
-    "sent_at": "2026-07-26T19:57:21Z"
   }
 ]
